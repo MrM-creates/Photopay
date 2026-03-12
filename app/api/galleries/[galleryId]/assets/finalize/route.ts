@@ -15,6 +15,9 @@ const finalizeSchema = z.object({
         fileSizeBytes: z.number().int().min(1).default(1_500_000),
         width: z.number().int().min(100).default(2400),
         height: z.number().int().min(100).default(1600),
+        storageKeyOriginal: z.string().trim().min(3).max(500).optional(),
+        storageKeyPreview: z.string().trim().min(3).max(500).optional(),
+        watermarkApplied: z.boolean().optional(),
       }),
     )
     .min(1)
@@ -71,6 +74,9 @@ export async function POST(request: Request, context: RouteContext) {
 
   const rows = parsed.data.files.map((file, index) => {
     const uuid = crypto.randomUUID();
+    const storageKeyOriginal = file.storageKeyOriginal ?? `orig/${galleryId}/${uuid}/${file.filename}`;
+    const storageKeyPreview = file.storageKeyPreview ?? `preview/${galleryId}/${uuid}/${file.filename}`;
+    const watermarkApplied = file.watermarkApplied ?? true;
 
     return {
       gallery_id: galleryId,
@@ -79,9 +85,9 @@ export async function POST(request: Request, context: RouteContext) {
       file_size_bytes: file.fileSizeBytes,
       width: file.width,
       height: file.height,
-      storage_key_original: `orig/${galleryId}/${uuid}/${file.filename}`,
-      storage_key_preview: `preview/${galleryId}/${uuid}/${file.filename}`,
-      watermark_applied: true,
+      storage_key_original: storageKeyOriginal,
+      storage_key_preview: storageKeyPreview,
+      watermark_applied: watermarkApplied,
       sort_order: index + offset,
       is_active: true,
     };
@@ -90,7 +96,7 @@ export async function POST(request: Request, context: RouteContext) {
   const insert = await supabase
     .from("gallery_assets")
     .insert(rows)
-    .select("id,filename,width,height,storage_key_preview,sort_order")
+    .select("id,filename,width,height,storage_key_preview,watermark_applied,sort_order")
     .order("sort_order", { ascending: true });
 
   if (insert.error) {
@@ -106,7 +112,7 @@ export async function POST(request: Request, context: RouteContext) {
         width: asset.width,
         height: asset.height,
         previewKey: asset.storage_key_preview,
-        watermark: true,
+        watermark: asset.watermark_applied,
       })),
     },
     201,

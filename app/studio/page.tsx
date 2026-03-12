@@ -32,6 +32,17 @@ type StudioNotice = {
   text: string;
 };
 
+type UploadedAssetFile = {
+  filename: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  width: number;
+  height: number;
+  storageKeyOriginal: string;
+  storageKeyPreview: string;
+  watermarkApplied: boolean;
+};
+
 type WizardStepId = "create" | "assets" | "packages" | "share" | "summary";
 type EntryMode = "new" | "open";
 
@@ -113,6 +124,34 @@ function previousStep(current: WizardStepId): WizardStepId {
 function nextStep(current: WizardStepId): WizardStepId {
   const index = wizardSteps.findIndex((step) => step.id === current);
   return wizardSteps[Math.min(wizardSteps.length - 1, index + 1)].id;
+}
+
+async function readImageDimensions(file: File) {
+  if (!file.type.startsWith("image/")) {
+    return { width: 2400, height: 1600 };
+  }
+
+  const previewUrl = URL.createObjectURL(file);
+
+  try {
+    const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => {
+        resolve({
+          width: image.naturalWidth || 2400,
+          height: image.naturalHeight || 1600,
+        });
+      };
+      image.onerror = () => reject(new Error("Could not read image dimensions"));
+      image.src = previewUrl;
+    });
+
+    return dimensions;
+  } catch {
+    return { width: 2400, height: 1600 };
+  } finally {
+    URL.revokeObjectURL(previewUrl);
+  }
 }
 
 export default function StudioPage() {
@@ -290,8 +329,12 @@ export default function StudioPage() {
       if (!photographerId) throw new Error("Photographer ID fehlt");
 
       const headers = new Headers(init?.headers);
-      headers.set("Content-Type", "application/json");
       headers.set("x-photographer-id", photographerId);
+
+      const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
+      if (!isFormData && !headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+      }
 
       return fetch(input, {
         ...init,
@@ -413,15 +456,7 @@ export default function StudioPage() {
       return false;
     }
 
-    const files = selectedFiles.map((file) => ({
-      filename: file.name,
-      mimeType: file.type || "application/octet-stream",
-      fileSizeBytes: file.size,
-      width: 2400,
-      height: 1600,
-    }));
-
-    if (files.length === 0) {
+    if (selectedFiles.length === 0) {
       setNotice({ type: "error", text: "Bitte wähle mindestens ein Bild aus." });
       return false;
     }
@@ -430,9 +465,31 @@ export default function StudioPage() {
     setNotice(null);
 
     try {
+      const uploadedFiles: UploadedAssetFile[] = [];
+
+      for (const file of selectedFiles) {
+        const dimensions = await readImageDimensions(file);
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("width", String(dimensions.width));
+        formData.append("height", String(dimensions.height));
+
+        const uploadResponse = await withPhotographerHeaders(`/api/galleries/${selectedGalleryId}/assets/upload`, {
+          method: "POST",
+          body: formData,
+        });
+        const uploadJson = await uploadResponse.json();
+
+        if (!uploadResponse.ok) {
+          throw new Error(uploadJson?.error?.message ?? `Upload fehlgeschlagen (${file.name})`);
+        }
+
+        uploadedFiles.push(uploadJson.file as UploadedAssetFile);
+      }
+
       const response = await withPhotographerHeaders(`/api/galleries/${selectedGalleryId}/assets/finalize`, {
         method: "POST",
-        body: JSON.stringify({ files }),
+        body: JSON.stringify({ files: uploadedFiles }),
       });
       const json = await response.json();
 
