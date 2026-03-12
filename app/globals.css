@@ -705,6 +705,11 @@ pre,
   opacity: 0.55;
 }
 
+.selected-file-row-failed {
+  border-color: rgba(255, 149, 102, 0.6);
+  box-shadow: 0 0 0 1px rgba(255, 149, 102, 0.22);
+}
+
 .selected-file-preview-wrap {
   border-radius: 12px;
   overflow: hidden;
@@ -737,6 +742,18 @@ pre,
   line-height: 1.2;
 }
 
+.selected-file-badge {
+  display: inline-flex;
+  width: fit-content;
+  border: 1px solid rgba(255, 149, 102, 0.6);
+  background: rgba(72, 31, 12, 0.84);
+  color: #ffbd9a;
+  border-radius: 999px;
+  padding: 0.08rem 0.4rem;
+  font-size: 0.64rem;
+  font-weight: 700;
+}
+
 .selected-file-name {
   display: inline-block;
   white-space: normal;
@@ -756,6 +773,63 @@ pre,
 .selected-file-actions .btn {
   padding: 0.34rem 0.62rem;
   font-size: 0.78rem;
+}
+
+.save-indicator {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.55rem 0.72rem;
+  background: rgba(8, 14, 22, 0.86);
+}
+
+.save-indicator-saving {
+  border-color: rgba(103, 165, 255, 0.45);
+}
+
+.save-indicator-saved {
+  border-color: rgba(47, 207, 159, 0.45);
+}
+
+.save-indicator-partial {
+  border-color: rgba(255, 149, 102, 0.55);
+}
+
+.save-indicator-error {
+  border-color: rgba(255, 106, 96, 0.58);
+}
+
+.save-toast {
+  position: sticky;
+  top: 0.6rem;
+  z-index: 40;
+  width: fit-content;
+  margin-left: auto;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(8, 14, 22, 0.94);
+  padding: 0.34rem 0.62rem;
+  box-shadow: 0 8px 20px rgba(4, 9, 16, 0.35);
+}
+
+.save-toast-saving {
+  border-color: rgba(103, 165, 255, 0.45);
+}
+
+.save-toast-saved {
+  border-color: rgba(47, 207, 159, 0.45);
+}
+
+.notice-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.btn-inline {
+  padding: 0.25rem 0.52rem;
+  font-size: 0.72rem;
 }
 
 .project-assets-grid {

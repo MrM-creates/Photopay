@@ -11,7 +11,6 @@ export const runtime = "nodejs";
 const createGallerySchema = z.object({
   title: z.string().trim().min(2).max(120),
   description: z.string().trim().max(1000).optional(),
-  accessPassword: z.string().min(6).max(128),
 });
 
 export async function GET(request: Request) {
@@ -20,17 +19,50 @@ export async function GET(request: Request) {
 
   const supabase = createAdminClient();
 
-  const galleriesQuery = await supabase
+  let supportsLifecycleColumns = true;
+  const lifecycleQuery = await supabase
     .from("galleries")
-    .select("id,title,description,public_slug,status,published_at,cover_asset_id,created_at")
+    .select("id,title,description,public_slug,status,published_at,cover_asset_id,archive_after_days,never_auto_archive,created_at")
     .eq("photographer_id", auth.photographerId)
     .order("created_at", { ascending: false });
 
-  if (galleriesQuery.error) {
-    return fail("DB_ERROR", galleriesQuery.error.message, 500);
+  let galleryRows: Array<{
+    id: string;
+    title: string;
+    description: string | null;
+    public_slug: string;
+    status: string;
+    published_at: string | null;
+    cover_asset_id: string | null;
+    archive_after_days?: number | null;
+    never_auto_archive?: boolean | null;
+    created_at: string;
+  }> = [];
+
+  if (lifecycleQuery.error?.code === "42703") {
+    supportsLifecycleColumns = false;
+    const fallbackQuery = await supabase
+      .from("galleries")
+      .select("id,title,description,public_slug,status,published_at,cover_asset_id,created_at")
+      .eq("photographer_id", auth.photographerId)
+      .order("created_at", { ascending: false });
+
+    if (fallbackQuery.error) {
+      return fail("DB_ERROR", fallbackQuery.error.message, 500);
+    }
+
+    galleryRows = fallbackQuery.data.map((row) => ({
+      ...row,
+      archive_after_days: 90,
+      never_auto_archive: false,
+    }));
+  } else if (lifecycleQuery.error) {
+    return fail("DB_ERROR", lifecycleQuery.error.message, 500);
+  } else {
+    galleryRows = lifecycleQuery.data;
   }
 
-  const galleryIds = galleriesQuery.data.map((gallery) => gallery.id);
+  const galleryIds = galleryRows.map((gallery) => gallery.id);
   if (galleryIds.length === 0) {
     return ok({ galleries: [] });
   }
@@ -68,18 +100,22 @@ export async function GET(request: Request) {
   }
 
   return ok({
-    galleries: galleriesQuery.data.map((gallery) => ({
-      id: gallery.id,
-      title: gallery.title,
-      description: gallery.description,
-      publicSlug: gallery.public_slug,
-      status: gallery.status,
-      publishedAt: gallery.published_at,
-      coverAssetId: gallery.cover_asset_id,
-      createdAt: gallery.created_at,
-      packageCount: packageCountByGallery.get(gallery.id) ?? 0,
-      assetCount: assetCountByGallery.get(gallery.id) ?? 0,
-    })),
+    galleries: galleryRows.map((row) => {
+      return {
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        publicSlug: row.public_slug,
+        status: row.status,
+        publishedAt: row.published_at,
+        coverAssetId: row.cover_asset_id,
+        archiveAfterDays: supportsLifecycleColumns ? (row.archive_after_days ?? 90) : 90,
+        neverAutoArchive: supportsLifecycleColumns ? Boolean(row.never_auto_archive) : false,
+        createdAt: row.created_at,
+        packageCount: packageCountByGallery.get(row.id) ?? 0,
+        assetCount: assetCountByGallery.get(row.id) ?? 0,
+      };
+    }),
   });
 }
 
@@ -114,7 +150,8 @@ export async function POST(request: Request) {
     return fail("DB_ERROR", ensurePhotographer.error.message, 500);
   }
 
-  const accessPasswordHash = await hash(parsed.data.accessPassword, 12);
+  const placeholderPassword = `draft-${crypto.randomUUID()}-${Date.now()}`;
+  const accessPasswordHash = await hash(placeholderPassword, 12);
   const publicSlug = toPublicSlug(parsed.data.title);
 
   const insert = await supabase

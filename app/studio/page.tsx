@@ -12,6 +12,8 @@ type Gallery = {
   status: "draft" | "published" | "archived";
   publishedAt: string | null;
   coverAssetId?: string | null;
+  archiveAfterDays?: number | null;
+  neverAutoArchive?: boolean;
   packageCount: number;
   assetCount: number;
 };
@@ -31,6 +33,7 @@ type PackageRow = {
 type StudioNotice = {
   type: "error" | "success" | "muted";
   text: string;
+  action?: "reload_project" | "reload_page" | "retry_failed_uploads";
 };
 
 type UploadedAssetFile = {
@@ -122,6 +125,15 @@ function toFriendlyError(error: unknown, fallback: string) {
   return fallback;
 }
 
+function getErrorKind(error: unknown): "context" | "network" | "other" {
+  const raw = error instanceof Error ? error.message : "";
+  const lower = raw.toLowerCase();
+
+  if (raw.includes("CONTEXT_MISMATCH")) return "context";
+  if (lower.includes("failed to fetch") || lower.includes("network")) return "network";
+  return "other";
+}
+
 function nextIncompleteStep(input: {
   hasGallery: boolean;
   hasAssets: boolean;
@@ -188,9 +200,12 @@ export default function StudioPage() {
 
   const [galleryTitle, setGalleryTitle] = useState("Babyshooting Moritz 20260329");
   const [galleryDescription, setGalleryDescription] = useState("Babyshooting im Studio");
-  const [galleryPassword, setGalleryPassword] = useState("muster123");
+  const [galleryPassword, setGalleryPassword] = useState("");
+  const [archiveAfterDays, setArchiveAfterDays] = useState("90");
+  const [neverAutoArchive, setNeverAutoArchive] = useState(false);
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [failedUploadKeys, setFailedUploadKeys] = useState<string[]>([]);
   const [dragSelectedFileKey, setDragSelectedFileKey] = useState<string | null>(null);
   const [isDragOverAssets, setIsDragOverAssets] = useState(false);
 
@@ -201,6 +216,7 @@ export default function StudioPage() {
   const [extraPrice, setExtraPrice] = useState("15");
 
   const [loading, setLoading] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "partial" | "error">("idle");
   const [notice, setNotice] = useState<StudioNotice | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const projectWriteQueueRef = useRef<Map<string, Promise<void>>>(new Map());
@@ -211,6 +227,7 @@ export default function StudioPage() {
   );
 
   const currentProjectLabel = selectedGallery?.title ?? (galleries.length > 0 ? "Projekt auswählen" : "Kein Projekt geöffnet");
+  const failedUploadKeySet = useMemo(() => new Set(failedUploadKeys), [failedUploadKeys]);
 
   const publicGalleryUrl = useMemo(() => {
     if (!selectedGallery) return "";
@@ -233,6 +250,25 @@ export default function StudioPage() {
     };
   }, [galleries.length, packages.length, selectedGallery?.assetCount, selectedGallery?.status]);
 
+  const saveStatusText = useMemo(() => {
+    if (saveStatus === "saving") return "Speichert gerade...";
+    if (saveStatus === "saved") return "Alle Änderungen sind gespeichert.";
+    if (saveStatus === "partial") return "Teilweise gespeichert. Bitte fehlgeschlagene Bilder erneut hochladen.";
+    if (saveStatus === "error") return "Speichern fehlgeschlagen. Bitte versuche es erneut.";
+    return "";
+  }, [saveStatus]);
+
+  useEffect(() => {
+    if (saveStatus !== "saved") return;
+    const timer = window.setTimeout(() => {
+      setSaveStatus("idle");
+    }, 2200);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [saveStatus]);
+
   const canGoNext = useMemo(() => {
     if (activeStep === "create") return progress.hasGallery;
     if (activeStep === "assets") return progress.hasAssets || selectedFiles.length > 0;
@@ -240,6 +276,29 @@ export default function StudioPage() {
     if (activeStep === "share") return progress.isPublished;
     return false;
   }, [activeStep, progress.hasAssets, progress.hasGallery, progress.hasPackages, progress.isPublished, selectedFiles.length]);
+
+  const archiveDaysNumber = Number(archiveAfterDays);
+  const archiveDaysIsValid =
+    Number.isInteger(archiveDaysNumber) && archiveDaysNumber >= 7 && archiveDaysNumber <= 3650;
+
+  const showGlobalNavigation = !(activeStep === "create" && entryMode === "new");
+
+  const setErrorNotice = useCallback((error: unknown, fallback: string) => {
+    const kind = getErrorKind(error);
+    const text = toFriendlyError(error, fallback);
+
+    if (kind === "context") {
+      setNotice({ type: "error", text, action: "reload_project" });
+      return;
+    }
+
+    if (kind === "network") {
+      setNotice({ type: "error", text, action: "reload_page" });
+      return;
+    }
+
+    setNotice({ type: "error", text });
+  }, []);
 
   function isStepAccessible(step: WizardStepId) {
     if (step === "create") return true;
@@ -308,7 +367,14 @@ export default function StudioPage() {
   }
 
   function removeSelectedFile(index: number) {
-    setSelectedFiles((previous) => previous.filter((_, currentIndex) => currentIndex !== index));
+    setSelectedFiles((previous) => {
+      const removed = previous[index];
+      if (removed) {
+        const removedKey = fileFingerprint(removed);
+        setFailedUploadKeys((existing) => existing.filter((key) => key !== removedKey));
+      }
+      return previous.filter((_, currentIndex) => currentIndex !== index);
+    });
   }
 
   function formatFileSize(sizeInBytes: number) {
@@ -486,9 +552,10 @@ export default function StudioPage() {
     if (!photographerId) return;
 
     void loadGalleries().catch((error) => {
-      setNotice({ type: "error", text: toFriendlyError(error, "Projekte konnten nicht geladen werden.") });
+      setErrorNotice(error, "Projekte konnten nicht geladen werden.");
+      setSaveStatus("error");
     });
-  }, [photographerId, loadGalleries]);
+  }, [photographerId, loadGalleries, setErrorNotice]);
 
   useEffect(() => {
     if (!selectedGalleryId || !photographerId) {
@@ -498,12 +565,31 @@ export default function StudioPage() {
     }
 
     void loadPackages(selectedGalleryId).catch((error) => {
-      setNotice({ type: "error", text: toFriendlyError(error, "Pakete konnten nicht geladen werden.") });
+      setErrorNotice(error, "Pakete konnten nicht geladen werden.");
     });
     void loadProjectAssets(selectedGalleryId).catch((error) => {
-      setNotice({ type: "error", text: toFriendlyError(error, "Bilder konnten nicht geladen werden.") });
+      setErrorNotice(error, "Bilder konnten nicht geladen werden.");
     });
-  }, [selectedGalleryId, photographerId, loadPackages, loadProjectAssets]);
+  }, [selectedGalleryId, photographerId, loadPackages, loadProjectAssets, setErrorNotice]);
+
+  useEffect(() => {
+    setSelectedFiles([]);
+    setFailedUploadKeys([]);
+    setDragSelectedFileKey(null);
+    setGalleryPassword("");
+    setSaveStatus("idle");
+  }, [selectedGalleryId]);
+
+  useEffect(() => {
+    if (!selectedGallery) {
+      setNeverAutoArchive(false);
+      setArchiveAfterDays("90");
+      return;
+    }
+
+    setNeverAutoArchive(Boolean(selectedGallery.neverAutoArchive));
+    setArchiveAfterDays(String(selectedGallery.archiveAfterDays ?? 90));
+  }, [selectedGallery]);
 
   useEffect(() => {
     if (!requestedProjectId || galleries.length === 0) return;
@@ -524,6 +610,7 @@ export default function StudioPage() {
   async function handleCreateGallery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
+    setSaveStatus("saving");
     setNotice(null);
 
     try {
@@ -532,7 +619,6 @@ export default function StudioPage() {
         body: JSON.stringify({
           title: galleryTitle,
           description: galleryDescription,
-          accessPassword: galleryPassword,
         }),
       });
       const json = await response.json();
@@ -543,31 +629,41 @@ export default function StudioPage() {
 
       await loadGalleries();
       setSelectedGalleryId(json.id);
+      setFailedUploadKeys([]);
       setNotice(null);
+      setSaveStatus("saved");
       setActiveStep("assets");
     } catch (error) {
-      setNotice({ type: "error", text: toFriendlyError(error, "Das Projekt konnte nicht erstellt werden. Bitte prüfe deine Eingaben.") });
+      setSaveStatus("error");
+      setErrorNotice(error, "Das Projekt konnte nicht erstellt werden. Bitte prüfe deine Eingaben.");
     } finally {
       setLoading(false);
     }
   }
 
-  async function persistSelectedFiles() {
+  async function persistSelectedFiles(options?: { onlyFailed?: boolean }) {
     if (!selectedGalleryId) {
       setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
+      setSaveStatus("error");
       return false;
     }
 
-    if (selectedFiles.length === 0) {
+    const onlyFailed = options?.onlyFailed === true;
+    const filesSnapshot = onlyFailed
+      ? selectedFiles.filter((file) => failedUploadKeySet.has(fileFingerprint(file)))
+      : [...selectedFiles];
+
+    if (filesSnapshot.length === 0) {
       setNotice({ type: "error", text: "Bitte wähle mindestens ein Bild aus." });
+      setSaveStatus("error");
       return false;
     }
 
     const projectId = selectedGalleryId;
-    const filesSnapshot = [...selectedFiles];
 
     return runWithProjectWriteLock(projectId, async () => {
       setLoading(true);
+      setSaveStatus("saving");
       setNotice(null);
 
       try {
@@ -604,7 +700,10 @@ export default function StudioPage() {
           setNotice({
             type: "error",
             text: "Die Bilder konnten nicht gespeichert werden. Bitte versuche es erneut.",
+            action: "retry_failed_uploads",
           });
+          setFailedUploadKeys(filesSnapshot.map((file) => fileFingerprint(file)));
+          setSaveStatus("error");
           return false;
         }
 
@@ -625,18 +724,24 @@ export default function StudioPage() {
           setSelectedFiles((previous) =>
             previous.filter((file) => failedFileKeys.has(fileFingerprint(file))),
           );
+          setFailedUploadKeys(Array.from(failedFileKeys));
           setNotice({
             type: "error",
             text: `${uploadedFiles.length} Bild(er) wurden hinzugefügt, ${failedFileKeys.size} konnten nicht gespeichert werden.`,
+            action: "retry_failed_uploads",
           });
+          setSaveStatus("partial");
           return false;
         } else {
           setSelectedFiles([]);
+          setFailedUploadKeys([]);
           setNotice(null);
+          setSaveStatus("saved");
           return true;
         }
       } catch (error) {
-        setNotice({ type: "error", text: toFriendlyError(error, "Die Bilder konnten nicht gespeichert werden. Bitte versuche es erneut.") });
+        setSaveStatus("error");
+        setErrorNotice(error, "Die Bilder konnten nicht gespeichert werden. Bitte versuche es erneut.");
         return false;
       } finally {
         setLoading(false);
@@ -657,7 +762,7 @@ export default function StudioPage() {
     const json = await response.json();
 
     if (!response.ok) {
-      throw new Error(json?.error?.message ?? "Reihenfolge konnte nicht gespeichert werden");
+      throw new Error(json?.error?.code ?? json?.error?.message ?? "Reihenfolge konnte nicht gespeichert werden");
     }
 
     await loadProjectAssets(projectId);
@@ -680,12 +785,15 @@ export default function StudioPage() {
     await runWithProjectWriteLock(projectId, async () => {
       setProjectAssets(reordered);
       setLoading(true);
+      setSaveStatus("saving");
       setNotice(null);
 
       try {
         await persistAssetOrder(projectId, reordered.map((asset) => asset.id));
+        setSaveStatus("saved");
       } catch (error) {
-        setNotice({ type: "error", text: toFriendlyError(error, "Die Reihenfolge konnte nicht gespeichert werden.") });
+        setSaveStatus("error");
+        setErrorNotice(error, "Die Reihenfolge konnte nicht gespeichert werden.");
         await loadProjectAssets(projectId);
       } finally {
         setLoading(false);
@@ -700,6 +808,7 @@ export default function StudioPage() {
 
     await runWithProjectWriteLock(projectId, async () => {
       setLoading(true);
+      setSaveStatus("saving");
       setNotice(null);
       try {
         const response = await withProjectHeaders(projectId, `/api/galleries/${projectId}/assets`, {
@@ -715,8 +824,10 @@ export default function StudioPage() {
         }
 
         await loadGalleries();
+        setSaveStatus("saved");
       } catch (error) {
-        setNotice({ type: "error", text: toFriendlyError(error, "Cover konnte nicht gespeichert werden.") });
+        setSaveStatus("error");
+        setErrorNotice(error, "Cover konnte nicht gespeichert werden.");
       } finally {
         setLoading(false);
       }
@@ -729,6 +840,7 @@ export default function StudioPage() {
 
     await runWithProjectWriteLock(projectId, async () => {
       setLoading(true);
+      setSaveStatus("saving");
       setNotice(null);
       try {
         const response = await withProjectHeaders(projectId, `/api/galleries/${projectId}/assets/${assetId}`, {
@@ -741,8 +853,10 @@ export default function StudioPage() {
 
         await loadProjectAssets(projectId);
         await loadGalleries();
+        setSaveStatus("saved");
       } catch (error) {
-        setNotice({ type: "error", text: toFriendlyError(error, "Bild konnte nicht entfernt werden.") });
+        setSaveStatus("error");
+        setErrorNotice(error, "Bild konnte nicht entfernt werden.");
       } finally {
         setLoading(false);
       }
@@ -770,6 +884,7 @@ export default function StudioPage() {
 
     if (activeStep === "assets" && !progress.hasAssets) {
       setNotice({ type: "error", text: "Bitte wähle mindestens ein Bild aus oder füge zuerst Bilder hinzu." });
+      setSaveStatus("error");
       return;
     }
 
@@ -781,6 +896,7 @@ export default function StudioPage() {
 
     if (!selectedGalleryId) {
       setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
+      setSaveStatus("error");
       return;
     }
 
@@ -788,6 +904,7 @@ export default function StudioPage() {
 
     await runWithProjectWriteLock(projectId, async () => {
       setLoading(true);
+      setSaveStatus("saving");
       setNotice(null);
 
       try {
@@ -810,9 +927,11 @@ export default function StudioPage() {
         await loadGalleries();
         await loadPackages(projectId);
         setNotice(null);
+        setSaveStatus("saved");
         setActiveStep("share");
       } catch (error) {
-        setNotice({ type: "error", text: toFriendlyError(error, "Das Paket konnte nicht gespeichert werden. Bitte prüfe die Eingaben.") });
+        setSaveStatus("error");
+        setErrorNotice(error, "Das Paket konnte nicht gespeichert werden. Bitte prüfe die Eingaben.");
       } finally {
         setLoading(false);
       }
@@ -822,17 +941,35 @@ export default function StudioPage() {
   async function handlePublishGallery() {
     if (!selectedGalleryId) {
       setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
+      setSaveStatus("error");
+      return;
+    }
+    if (galleryPassword.trim().length < 6) {
+      setNotice({ type: "error", text: "Bitte setze ein Kunden-Passwort mit mindestens 6 Zeichen." });
+      setSaveStatus("error");
+      return;
+    }
+    if (!neverAutoArchive && !archiveDaysIsValid) {
+      setNotice({ type: "error", text: "Bitte gib eine gültige Archivierungsdauer zwischen 7 und 3650 Tagen ein." });
+      setSaveStatus("error");
       return;
     }
     const projectId = selectedGalleryId;
+    const normalizedArchiveAfterDays = archiveDaysIsValid ? archiveDaysNumber : 90;
 
     await runWithProjectWriteLock(projectId, async () => {
       setLoading(true);
+      setSaveStatus("saving");
       setNotice(null);
 
       try {
         const response = await withProjectHeaders(projectId, `/api/galleries/${projectId}/publish`, {
           method: "POST",
+          body: JSON.stringify({
+            accessPassword: galleryPassword,
+            neverAutoArchive,
+            archiveAfterDays: normalizedArchiveAfterDays,
+          }),
         });
         const json = await response.json();
 
@@ -842,13 +979,41 @@ export default function StudioPage() {
 
         await loadGalleries();
         setNotice(null);
+        setSaveStatus("saved");
         setActiveStep("summary");
       } catch (error) {
-        setNotice({ type: "error", text: toFriendlyError(error, "Die Freigabe hat nicht geklappt. Bitte versuche es in einem Moment erneut.") });
+        setSaveStatus("error");
+        setErrorNotice(error, "Die Freigabe hat nicht geklappt. Bitte versuche es in einem Moment erneut.");
       } finally {
         setLoading(false);
       }
     });
+  }
+
+  async function reloadProjectContext() {
+    setLoading(true);
+    setNotice(null);
+    try {
+      await loadGalleries();
+      if (selectedGalleryId) {
+        await loadPackages(selectedGalleryId);
+        await loadProjectAssets(selectedGalleryId);
+      }
+      setSaveStatus("idle");
+    } catch (error) {
+      setSaveStatus("error");
+      setErrorNotice(error, "Das Projekt konnte nicht neu geladen werden.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRetryFailedUploads() {
+    if (failedUploadKeys.length === 0) return;
+    const saved = await persistSelectedFiles({ onlyFailed: true });
+    if (saved) {
+      setNotice(null);
+    }
   }
 
   return (
@@ -892,7 +1057,41 @@ export default function StudioPage() {
         </nav>
       </header>
 
-      {notice ? <div className={`notice notice-${notice.type}`}>{notice.text}</div> : null}
+      {saveStatus === "saving" || saveStatus === "saved" ? (
+        <div className={`save-toast save-toast-${saveStatus}`}>
+          <span className="small">{saveStatusText}</span>
+        </div>
+      ) : null}
+
+      {notice ? (
+        <div className={`notice notice-${notice.type}`}>
+          <div className="notice-content">
+            <span>{notice.text}</span>
+            {notice.action === "reload_project" ? (
+              <button className="btn btn-secondary btn-inline" disabled={loading} onClick={() => void reloadProjectContext()} type="button">
+                Projekt neu laden
+              </button>
+            ) : null}
+            {notice.action === "reload_page" ? (
+              <button
+                className="btn btn-secondary btn-inline"
+                disabled={loading}
+                onClick={() => {
+                  window.location.reload();
+                }}
+                type="button"
+              >
+                Seite neu laden
+              </button>
+            ) : null}
+            {notice.action === "retry_failed_uploads" ? (
+              <button className="btn btn-secondary btn-inline" disabled={loading} onClick={() => void handleRetryFailedUploads()} type="button">
+                Fehlgeschlagene erneut hochladen
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {activeStep === "create" ? (
         <section className="card grid" style={{ gap: "0.75rem" }}>
@@ -900,7 +1099,7 @@ export default function StudioPage() {
           <p className="helper" style={{ marginBottom: 0 }}>
             {entryMode === "open"
               ? "Wähle ein bestehendes Projekt aus und fahre direkt mit den nächsten Schritten fort."
-              : "Lege zuerst das Projekt für dein Shooting an."}
+              : "Gib deinem Projekt einen Namen, der dir sofort die Verbindung zum Shooting zeigt."}
           </p>
 
           {entryMode === "open" ? (
@@ -962,20 +1161,7 @@ export default function StudioPage() {
                   />
                 </div>
 
-                <div>
-                  <label className="label" htmlFor="gallery-password">
-                    Passwort für Kunden
-                  </label>
-                  <input
-                    className="input"
-                    id="gallery-password"
-                    onChange={(event) => setGalleryPassword(event.target.value)}
-                    required
-                    value={galleryPassword}
-                  />
-                </div>
-
-                <div className="toolbar">
+                <div className="toolbar" style={{ justifyContent: "flex-end" }}>
                   <button className="btn" disabled={loading} type="submit">
                     Weiter
                   </button>
@@ -1050,10 +1236,17 @@ export default function StudioPage() {
                     <p className="small muted" style={{ marginBottom: 0 }}>
                       Tipp: Du kannst die ausgewählten Bilder per Drag-and-Drop umsortieren.
                     </p>
+                    {failedUploadKeys.length > 0 ? (
+                      <div className="toolbar" style={{ justifyContent: "flex-start" }}>
+                        <button className="btn btn-secondary" disabled={loading} onClick={() => void handleRetryFailedUploads()} type="button">
+                          Nur fehlgeschlagene erneut hochladen
+                        </button>
+                      </div>
+                    ) : null}
                     <div className="selected-files">
                       {selectedFilePreviews.map((preview, index) => (
                         <div
-                          className={`selected-file-row ${dragSelectedFileKey === preview.key ? "selected-file-row-dragging" : ""}`}
+                          className={`selected-file-row ${dragSelectedFileKey === preview.key ? "selected-file-row-dragging" : ""} ${failedUploadKeySet.has(preview.key) ? "selected-file-row-failed" : ""}`}
                           draggable
                           key={preview.key}
                           onDragEnd={() => setDragSelectedFileKey(null)}
@@ -1077,6 +1270,7 @@ export default function StudioPage() {
                         <div className="selected-file-main">
                           <div className="selected-file-meta">
                             <span className="small selected-file-name">{preview.file.name}</span>
+                            {failedUploadKeySet.has(preview.key) ? <span className="selected-file-badge">Upload fehlgeschlagen</span> : null}
                             <span className="small muted">{formatFileSize(preview.file.size)}</span>
                           </div>
                         </div>
@@ -1256,6 +1450,56 @@ export default function StudioPage() {
                 </div>
               </div>
 
+              <div className="grid" style={{ gap: "0.4rem" }}>
+                <label className="label" htmlFor="share-password">
+                  Kunden-Passwort
+                </label>
+                <input
+                  className="input"
+                  id="share-password"
+                  onChange={(event) => setGalleryPassword(event.target.value)}
+                  placeholder="Mindestens 6 Zeichen"
+                  value={galleryPassword}
+                />
+              </div>
+
+              <div className="grid" style={{ gap: "0.4rem" }}>
+                <label className="label">Lebensdauer der Galerie</label>
+                <label className="asset-item" style={{ width: "fit-content" }}>
+                  <input
+                    checked={neverAutoArchive}
+                    onChange={(event) => setNeverAutoArchive(event.target.checked)}
+                    type="checkbox"
+                  />
+                  Nie automatisch archivieren
+                </label>
+                {!neverAutoArchive ? (
+                  <div className="grid" style={{ gap: "0.35rem", maxWidth: "260px" }}>
+                    <label className="label" htmlFor="archive-days">
+                      Automatisch archivieren nach (Tage)
+                    </label>
+                    <input
+                      className="input mono"
+                      id="archive-days"
+                      max={3650}
+                      min={7}
+                      onChange={(event) => setArchiveAfterDays(event.target.value)}
+                      type="number"
+                      value={archiveAfterDays}
+                    />
+                    {!archiveDaysIsValid ? (
+                      <p className="small muted" style={{ marginBottom: 0 }}>
+                        Bitte einen Wert zwischen 7 und 3650 eingeben.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="small muted" style={{ marginBottom: 0 }}>
+                    Diese Galerie bleibt aktiv, bis du sie manuell archivierst.
+                  </p>
+                )}
+              </div>
+
               {projectAssets.length > 0 ? (
                 <div className="grid" style={{ gap: "0.6rem" }}>
                   <h3 style={{ marginBottom: 0 }}>Galerie-Vorschau (Freigabe)</h3>
@@ -1325,7 +1569,17 @@ export default function StudioPage() {
               )}
 
               <div className="toolbar">
-                <button className="btn" disabled={loading || !selectedGalleryId} onClick={handlePublishGallery} type="button">
+                <button
+                  className="btn"
+                  disabled={
+                    loading ||
+                    !selectedGalleryId ||
+                    galleryPassword.trim().length < 6 ||
+                    (!neverAutoArchive && !archiveDaysIsValid)
+                  }
+                  onClick={handlePublishGallery}
+                  type="button"
+                >
                   Jetzt freigeben
                 </button>
               </div>
@@ -1387,38 +1641,49 @@ export default function StudioPage() {
               </p>
             </div>
           ) : null}
+
+          {selectedGallery ? (
+            <div className="notice notice-muted small">
+              Galerie-Lebensdauer:{" "}
+              {selectedGallery.neverAutoArchive
+                ? "Keine automatische Archivierung"
+                : `Automatisch nach ${selectedGallery.archiveAfterDays ?? 90} Tagen`}
+            </div>
+          ) : null}
         </section>
       ) : null}
 
-      <section className="card">
-        <div className="toolbar" style={{ justifyContent: "space-between" }}>
-            <button
-              className="btn btn-secondary"
-              disabled={loading || activeStep === "create"}
-              onClick={() => setActiveStep(previousStep(activeStep))}
-              type="button"
-            >
-            Zurück
-          </button>
+      {showGlobalNavigation ? (
+        <section className="card">
+          <div className="toolbar" style={{ justifyContent: "space-between" }}>
+              <button
+                className="btn btn-secondary"
+                disabled={loading || activeStep === "create"}
+                onClick={() => setActiveStep(previousStep(activeStep))}
+                type="button"
+              >
+              Zurück
+            </button>
 
-          {activeStep !== "summary" ? (
-            <button
-              className="btn"
-              disabled={loading || !canGoNext}
-              onClick={() => {
-                void handleNext();
-              }}
-              type="button"
-            >
-              Weiter
-            </button>
-          ) : (
-            <button className="btn" onClick={() => setActiveStep(progress.recommendedStep)} type="button">
-              Zum nächsten offenen Schritt
-            </button>
-          )}
-        </div>
-      </section>
+            {activeStep !== "summary" ? (
+              <button
+                className="btn"
+                disabled={loading || !canGoNext}
+                onClick={() => {
+                  void handleNext();
+                }}
+                type="button"
+              >
+                Weiter
+              </button>
+            ) : (
+              <button className="btn" onClick={() => setActiveStep(progress.recommendedStep)} type="button">
+                Zum nächsten offenen Schritt
+              </button>
+            )}
+          </div>
+        </section>
+      ) : null}
     </main>
   );
 }
