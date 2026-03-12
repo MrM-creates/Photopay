@@ -103,10 +103,10 @@ function formatDateTime(input: string | null | undefined) {
 }
 
 function toCustomerStatusLabel(status: Gallery["customerStatus"]) {
-  if (status === "completed") return "Download abgeschlossen";
-  if (status === "downloads") return "Downloads gestartet";
-  if (status === "active") return "Galerie geöffnet";
-  return "Noch nicht geöffnet";
+  if (status === "completed") return "Abgeschlossen";
+  if (status === "downloads") return "Downloads laufen";
+  if (status === "active") return "Geöffnet";
+  return "Noch kein Zugriff";
 }
 
 function toCustomerStatusClass(status: Gallery["customerStatus"]) {
@@ -133,11 +133,18 @@ function createClientUuid() {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   }
 
-  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+  const randomHex = (length: number) =>
+    Array.from({ length }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+
+  return `${randomHex(8)}-${randomHex(4)}-4${randomHex(3)}-${(8 + Math.floor(Math.random() * 4)).toString(16)}${randomHex(3)}-${randomHex(12)}`;
 }
 
 function fileFingerprint(file: File) {
   return `${file.name}__${file.size}__${file.lastModified}`;
+}
+
+function isUuidLike(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function toFriendlyError(error: unknown, fallback: string) {
@@ -159,7 +166,28 @@ function toFriendlyError(error: unknown, fallback: string) {
     return "Bitte prüfe deine Eingaben. Ein Feld ist noch unvollständig.";
   }
 
+  if (raw.includes("FEATURE_NOT_READY")) {
+    return "Kundenverwaltung ist in der Datenbank noch nicht aktiviert. Bitte kurz Migration ausführen oder vorerst „Kunden später zuordnen“ wählen.";
+  }
+
   if (raw.includes("DB_ERROR")) {
+    if (lower.includes("invalid input syntax for type uuid")) {
+      return "Die App-Identität war ungültig und wurde korrigiert. Bitte versuche es jetzt erneut.";
+    }
+    if (lower.includes("galleries_public_slug_key")) {
+      return "Der öffentliche Link war bereits vergeben. Bitte versuche es erneut.";
+    }
+    if (lower.includes("uq_galleries_photographer_title_normalized")) {
+      return "Dieser Projektname existiert bereits. Bitte wähle einen anderen Namen.";
+    }
+    if (lower.includes("violates unique constraint")) {
+      return "Ein Wert ist bereits vergeben. Bitte ändere den Projektnamen und versuche es erneut.";
+    }
+
+    const detail = raw.replace(/^DB_ERROR:\s*/i, "").trim();
+    if (detail) {
+      return `Speichern fehlgeschlagen: ${detail}`;
+    }
     return "Es ist ein technischer Fehler aufgetreten. Bitte versuche es erneut.";
   }
 
@@ -248,15 +276,17 @@ export default function StudioPage() {
   const [galleryDesign, setGalleryDesign] = useState<GalleryDesign>("clean");
   const [dragAssetId, setDragAssetId] = useState<string | null>(null);
 
-  const [galleryTitle, setGalleryTitle] = useState("Babyshooting Moritz 20260329");
-  const [galleryDescription, setGalleryDescription] = useState("Babyshooting im Studio");
+  const [galleryTitle, setGalleryTitle] = useState("");
+  const [galleryDescription, setGalleryDescription] = useState("");
   const [galleryPassword, setGalleryPassword] = useState("");
   const [createCustomerMode, setCreateCustomerMode] = useState<"none" | "existing" | "new">("none");
+  const [createCustomerSearch, setCreateCustomerSearch] = useState("");
   const [createCustomerId, setCreateCustomerId] = useState("");
   const [createCustomerName, setCreateCustomerName] = useState("");
   const [createCustomerEmail, setCreateCustomerEmail] = useState("");
   const [createCustomerNote, setCreateCustomerNote] = useState("");
   const [shareCustomerMode, setShareCustomerMode] = useState<"existing" | "new">("new");
+  const [shareCustomerSearch, setShareCustomerSearch] = useState("");
   const [shareCustomerId, setShareCustomerId] = useState("");
   const [shareCustomerName, setShareCustomerName] = useState("");
   const [shareCustomerEmail, setShareCustomerEmail] = useState("");
@@ -395,6 +425,24 @@ export default function StudioPage() {
     });
   }, [galleries, openProjectsSearch, openProjectsSort]);
 
+  const createStepCustomers = useMemo(() => {
+    const query = createCustomerSearch.trim().toLowerCase();
+    if (!query) return customers;
+    return customers.filter((customer) => {
+      const haystack = `${customer.fullName} ${customer.email}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [createCustomerSearch, customers]);
+
+  const shareStepCustomers = useMemo(() => {
+    const query = shareCustomerSearch.trim().toLowerCase();
+    if (!query) return customers;
+    return customers.filter((customer) => {
+      const haystack = `${customer.fullName} ${customer.email}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [customers, shareCustomerSearch]);
+
   const showGlobalNavigation = !(activeStep === "create" && entryMode === "new");
 
   const setErrorNotice = useCallback((error: unknown, fallback: string) => {
@@ -517,7 +565,7 @@ export default function StudioPage() {
 
   useEffect(() => {
     const stored = window.localStorage.getItem(photographerStorageKey);
-    if (stored) {
+    if (stored && isUuidLike(stored)) {
       setPhotographerId(stored);
     } else {
       const generated = createClientUuid();
@@ -547,10 +595,15 @@ export default function StudioPage() {
 
   const withPhotographerHeaders = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (!photographerId) throw new Error("Photographer ID fehlt");
+      let effectivePhotographerId = photographerId;
+      if (!effectivePhotographerId || !isUuidLike(effectivePhotographerId)) {
+        effectivePhotographerId = createClientUuid();
+        window.localStorage.setItem(photographerStorageKey, effectivePhotographerId);
+        setPhotographerId(effectivePhotographerId);
+      }
 
       const headers = new Headers(init?.headers);
-      headers.set("x-photographer-id", photographerId);
+      headers.set("x-photographer-id", effectivePhotographerId);
 
       const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
       if (!isFormData && !headers.has("Content-Type")) {
@@ -797,7 +850,7 @@ export default function StudioPage() {
   async function handleCreateGallery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (createCustomerMode === "existing" && !createCustomerId) {
-      setNotice({ type: "error", text: "Bitte wähle einen bestehenden Kunden aus oder wähle „Noch keinen Kunden zuordnen“." });
+      setNotice({ type: "error", text: "Bitte wähle einen bestehenden Kunden aus oder wähle „Kunden später zuordnen“." });
       setSaveStatus("error");
       return;
     }
@@ -835,7 +888,9 @@ export default function StudioPage() {
       const json = await response.json();
 
       if (!response.ok) {
-        throw new Error(json?.error?.code ?? json?.error?.message ?? "Galerie konnte nicht erstellt werden");
+        const code = typeof json?.error?.code === "string" ? json.error.code : "";
+        const message = typeof json?.error?.message === "string" ? json.error.message : "";
+        throw new Error([code, message].filter(Boolean).join(": ") || "Galerie konnte nicht erstellt werden");
       }
 
       await loadGalleries();
@@ -891,6 +946,20 @@ export default function StudioPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleQuickAssignCustomer() {
+    if (!selectedGalleryId) {
+      setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
+      setSaveStatus("error");
+      return;
+    }
+
+    setActiveStep("share");
+    setNotice({
+      type: "muted",
+      text: "Im Schritt „Galerie & Freigabe“ kannst du jetzt den Kunden auswählen oder neu erfassen.",
+    });
   }
 
   async function persistSelectedFiles(options?: { onlyFailed?: boolean }) {
@@ -1363,7 +1432,7 @@ export default function StudioPage() {
       const nextPhotographerId = parsed.photographerId?.trim() ?? "";
       const nextProjectId = parsed.projectId?.trim() ?? "";
 
-      if (!nextPhotographerId) {
+      if (!nextPhotographerId || !isUuidLike(nextPhotographerId)) {
         setGalleryTitle(folderName);
         setEntryMode("new");
         setNotice({
@@ -1373,13 +1442,16 @@ export default function StudioPage() {
         return;
       }
 
-      window.localStorage.setItem(photographerStorageKey, nextPhotographerId);
-      setPhotographerId(nextPhotographerId);
-      setGalleries([]);
-      setCustomers([]);
-      setSelectedGalleryId("");
-      setPackages([]);
-      setProjectAssets([]);
+      if (photographerId && nextPhotographerId !== photographerId) {
+        setGalleryTitle(folderName);
+        setEntryMode("new");
+        setNotice({
+          type: "muted",
+          text: "Dieser Ordner stammt aus einer anderen PhotoPay-Installation. Du kannst ihn hier als neues Projekt anlegen.",
+        });
+        return;
+      }
+
       setRequestedProjectId(nextProjectId || null);
       setEntryMode("open");
       setActiveStep("create");
@@ -1572,11 +1644,13 @@ export default function StudioPage() {
                             <strong>{gallery.title}</strong>
                             <div className="toolbar" style={{ gap: "0.4rem" }}>
                               <span className={`status ${gallery.status === "published" ? "status-published" : "status-draft"}`}>
-                                {gallery.status === "published" ? "Freigabe live" : "Nicht freigegeben"}
+                                {gallery.status === "published" ? "Live" : "Entwurf"}
                               </span>
-                              <span className={`status ${toCustomerStatusClass(gallery.customerStatus)}`}>
-                                {toCustomerStatusLabel(gallery.customerStatus)}
-                              </span>
+                              {gallery.status === "published" ? (
+                                <span className={`status ${toCustomerStatusClass(gallery.customerStatus)}`}>
+                                  {toCustomerStatusLabel(gallery.customerStatus)}
+                                </span>
+                              ) : null}
                             </div>
                             <p className="small muted" style={{ marginBottom: 0 }}>
                               {gallery.customerName ? `${gallery.customerName} (${gallery.customerEmail ?? "ohne E-Mail"})` : "Kein Kunde zugeordnet"}
@@ -1610,6 +1684,14 @@ export default function StudioPage() {
                       type="button"
                     >
                       Projekt löschen
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      disabled={loading || !selectedGalleryId}
+                      onClick={handleQuickAssignCustomer}
+                      type="button"
+                    >
+                      Kunde zuordnen
                     </button>
                     <button className="btn btn-secondary" disabled={loading} onClick={() => setEntryMode("new")} type="button">
                       Neues Projekt anlegen
@@ -1646,6 +1728,7 @@ export default function StudioPage() {
                     className="input"
                     id="gallery-title"
                     onChange={(event) => setGalleryTitle(event.target.value)}
+                    placeholder="z. B. Babyshooting Moritz 20260329"
                     required
                     value={galleryTitle}
                   />
@@ -1659,6 +1742,7 @@ export default function StudioPage() {
                     className="input"
                     id="gallery-description"
                     onChange={(event) => setGalleryDescription(event.target.value)}
+                    placeholder="optional"
                     value={galleryDescription}
                   />
                 </div>
@@ -1667,27 +1751,40 @@ export default function StudioPage() {
                   <label className="label">Kunde (optional)</label>
                   <select
                     className="select"
-                    onChange={(event) => setCreateCustomerMode(event.target.value as "none" | "existing" | "new")}
+                    onChange={(event) => {
+                      const nextMode = event.target.value as "none" | "existing" | "new";
+                      setCreateCustomerMode(nextMode);
+                      if (nextMode !== "existing") {
+                        setCreateCustomerSearch("");
+                      }
+                    }}
                     value={createCustomerMode}
                   >
-                    <option value="none">Noch keinen Kunden zuordnen</option>
-                    {customers.length > 0 ? <option value="existing">Bestehenden Kunden auswählen</option> : null}
-                    <option value="new">Neuen Kunden erfassen</option>
+                    <option value="none">Kunden später zuordnen</option>
+                    {customers.length > 0 ? <option value="existing">Kunde auswählen</option> : null}
+                    <option value="new">Kunde neu erfassen</option>
                   </select>
 
                   {createCustomerMode === "existing" ? (
-                    <div>
+                    <div className="grid" style={{ gap: "0.4rem" }}>
                       <label className="label" htmlFor="create-customer-existing">
-                        Bestehender Kunde
+                        Kunde auswählen
                       </label>
+                      <input
+                        className="input"
+                        id="create-customer-search"
+                        onChange={(event) => setCreateCustomerSearch(event.target.value)}
+                        placeholder="Kunde suchen (Name oder E-Mail)"
+                        value={createCustomerSearch}
+                      />
                       <select
                         className="select"
                         id="create-customer-existing"
                         onChange={(event) => setCreateCustomerId(event.target.value)}
                         value={createCustomerId}
                       >
-                        <option value="">Bitte wählen</option>
-                        {customers.map((customer) => (
+                        <option value="">{createStepCustomers.length > 0 ? "Bitte wählen" : "Keine Treffer"}</option>
+                        {createStepCustomers.map((customer) => (
                           <option key={customer.id} value={customer.id}>
                             {customer.fullName} ({customer.email})
                           </option>
@@ -2041,18 +2138,31 @@ export default function StudioPage() {
                 <label className="label">Kunde für diese Freigabe</label>
                 <select
                   className="select"
-                  onChange={(event) => setShareCustomerMode(event.target.value as "existing" | "new")}
+                  onChange={(event) => {
+                    const nextMode = event.target.value as "existing" | "new";
+                    setShareCustomerMode(nextMode);
+                    if (nextMode !== "existing") {
+                      setShareCustomerSearch("");
+                    }
+                  }}
                   value={shareCustomerMode}
                 >
-                  {customers.length > 0 ? <option value="existing">Bestehenden Kunden wählen</option> : null}
-                  <option value="new">Neuen Kunden erfassen</option>
+                  {customers.length > 0 ? <option value="existing">Kunde auswählen</option> : null}
+                  <option value="new">Kunde neu erfassen</option>
                 </select>
 
                 {shareCustomerMode === "existing" ? (
-                  <div>
+                  <div className="grid" style={{ gap: "0.4rem" }}>
                     <label className="label" htmlFor="share-customer-existing">
-                      Bestehender Kunde
+                      Kunde auswählen
                     </label>
+                    <input
+                      className="input"
+                      id="share-customer-search"
+                      onChange={(event) => setShareCustomerSearch(event.target.value)}
+                      placeholder="Kunde suchen (Name oder E-Mail)"
+                      value={shareCustomerSearch}
+                    />
                     <select
                       className="select"
                       id="share-customer-existing"
@@ -2066,8 +2176,8 @@ export default function StudioPage() {
                       }}
                       value={shareCustomerId}
                     >
-                      <option value="">Bitte wählen</option>
-                      {customers.map((customer) => (
+                      <option value="">{shareStepCustomers.length > 0 ? "Bitte wählen" : "Keine Treffer"}</option>
+                      {shareStepCustomers.map((customer) => (
                         <option key={customer.id} value={customer.id}>
                           {customer.fullName} ({customer.email})
                         </option>

@@ -43,6 +43,14 @@ type BaseGalleryRow = {
   created_at: string;
 };
 
+function isDuplicateProjectNameError(error: { code?: string; message?: string } | null | undefined) {
+  if (!error) return false;
+  const message = error.message ?? "";
+  if (message.includes("uq_galleries_photographer_title_normalized")) return true;
+  if (error.code === "23505" && /photographer.*title|title.*photographer/i.test(message)) return true;
+  return false;
+}
+
 function mapGalleryStatus(input: {
   paidOrderCount: number;
   purchasedAssetCount: number;
@@ -396,7 +404,7 @@ export async function POST(request: Request) {
         note: parsed.data.customer.note ?? null,
       });
       if (upsert.error) {
-        if (upsert.error.code === "42P01") {
+        if (isMissingSchemaObjectError(upsert.error)) {
           return fail(
             "FEATURE_NOT_READY",
             "Customer assignment is not available yet. Please run migration 20260312_0003_customers_and_engagement.sql.",
@@ -450,10 +458,7 @@ export async function POST(request: Request) {
       .select("id,public_slug,status")
       .single();
 
-    if (
-      fallbackInsert.error?.code === "23505" ||
-      fallbackInsert.error?.message?.includes("uq_galleries_photographer_title_normalized")
-    ) {
+    if (isDuplicateProjectNameError(fallbackInsert.error)) {
       return fail("DUPLICATE_PROJECT_NAME", "Es gibt bereits ein Projekt mit diesem Namen. Bitte wähle einen anderen Namen.", 409);
     }
 
@@ -472,10 +477,7 @@ export async function POST(request: Request) {
     );
   }
 
-  if (
-    insert.error?.code === "23505" ||
-    insert.error?.message?.includes("uq_galleries_photographer_title_normalized")
-  ) {
+  if (isDuplicateProjectNameError(insert.error)) {
     return fail("DUPLICATE_PROJECT_NAME", "Es gibt bereits ein Projekt mit diesem Namen. Bitte wähle einen anderen Namen.", 409);
   }
 
