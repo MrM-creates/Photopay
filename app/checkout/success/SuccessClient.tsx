@@ -22,6 +22,25 @@ function formatDate(input: string) {
   }).format(new Date(input));
 }
 
+function toFriendlyDownloadError(error: unknown, fallback: string) {
+  const raw = error instanceof Error ? error.message : "";
+  const lower = raw.toLowerCase();
+
+  if (lower.includes("failed to fetch") || lower.includes("network")) {
+    return "Der Server ist gerade nicht erreichbar. Bitte gleich nochmal versuchen.";
+  }
+
+  if (raw.includes("PAYMENT_NOT_COMPLETED")) {
+    return "Die Zahlung ist noch nicht bestaetigt. Bitte versuche es in ein bis zwei Minuten nochmal.";
+  }
+
+  if (raw.includes("GALLERY_ACCESS_DENIED")) {
+    return "Die Sitzung ist abgelaufen. Bitte oeffne den Kauf-Link erneut.";
+  }
+
+  return fallback;
+}
+
 export default function SuccessClient({ orderId }: Props) {
   const [cartToken, setCartToken] = useState("");
   const [items, setItems] = useState<DownloadItem[]>([]);
@@ -39,7 +58,7 @@ export default function SuccessClient({ orderId }: Props) {
 
   async function loadDownloads() {
     if (!orderId || !cartToken) {
-      setNotice({ type: "error", text: "order_id oder cart token fehlt." });
+      setNotice({ type: "error", text: "Uns fehlen noch Sitzungsdaten. Bitte den Kauf-Link erneut oeffnen." });
       return;
     }
 
@@ -60,9 +79,9 @@ export default function SuccessClient({ orderId }: Props) {
       }
 
       setItems((json.items ?? []) as DownloadItem[]);
-      setNotice({ type: "success", text: `${(json.items ?? []).length} Downloads verfügbar.` });
+      setNotice({ type: "success", text: `${(json.items ?? []).length} Download(s) sind bereit.` });
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unbekannter Fehler" });
+      setNotice({ type: "error", text: toFriendlyDownloadError(error, "Die Downloads konnten nicht geladen werden.") });
     } finally {
       setLoading(false);
     }
@@ -86,10 +105,10 @@ export default function SuccessClient({ orderId }: Props) {
         ...prev,
         [assetId]: json.storageKey as string,
       }));
-      setNotice({ type: "success", text: `Download für ${json.filename} freigegeben.` });
+      setNotice({ type: "success", text: `${json.filename} ist vorbereitet.` });
       await loadDownloads();
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unbekannter Fehler" });
+      setNotice({ type: "error", text: toFriendlyDownloadError(error, "Der Download konnte nicht vorbereitet werden.") });
     } finally {
       setLoading(false);
     }
@@ -98,14 +117,14 @@ export default function SuccessClient({ orderId }: Props) {
   return (
     <main className="grid" style={{ gap: "1rem" }}>
       <div className="nav">
-        <Link href="/">Home</Link>
+        <Link href="/">Start</Link>
         <Link href="/studio">Studio</Link>
       </div>
 
       <section className="card grid" style={{ gap: "0.6rem" }}>
         <h1 style={{ marginBottom: 0 }}>Zahlung erfolgreich</h1>
         <p className="muted small" style={{ marginBottom: 0 }}>
-          Lade hier die gekauften Bilder. Diese Seite nutzt den Warenkorb-Token der Kundensitzung.
+          Super. Hier kannst du jetzt deine gekauften Bilder herunterladen.
         </p>
 
         <div className="grid grid-2">
@@ -117,7 +136,7 @@ export default function SuccessClient({ orderId }: Props) {
           </div>
           <div>
             <label className="label" htmlFor="cart-token">
-              Cart Token
+              Sitzungs-Token
             </label>
             <input
               className="input mono"
@@ -153,7 +172,7 @@ export default function SuccessClient({ orderId }: Props) {
               <article className="card" key={item.assetId}>
                 <div className="kv">
                   <strong>{item.filename}</strong>
-                  <span className="status">Rest: {item.remainingDownloads}</span>
+                <span className="status">Rest: {item.remainingDownloads}</span>
                 </div>
                 <p className="small muted" style={{ marginTop: "0.4rem", marginBottom: "0.4rem" }}>
                   Ablauf: {formatDate(item.expiresAt)}
@@ -167,12 +186,12 @@ export default function SuccessClient({ orderId }: Props) {
                     }}
                     type="button"
                   >
-                    Download freischalten
+                    Download starten
                   </button>
                 </div>
                 {consumed[item.assetId] ? (
-                  <p className="small mono" style={{ marginTop: "0.5rem", marginBottom: 0 }}>
-                    storageKey: {consumed[item.assetId]}
+                  <p className="small muted" style={{ marginTop: "0.5rem", marginBottom: 0 }}>
+                    Download vorbereitet (Demo-Modus).
                   </p>
                 ) : null}
               </article>

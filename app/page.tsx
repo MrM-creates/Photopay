@@ -4,37 +4,36 @@ export default function HomePage() {
   return (
     <main className="grid" style={{ gap: "1.2rem" }}>
       <div className="nav">
-        <Link href="/">Home</Link>
+        <Link href="/">Start</Link>
         <Link href="/studio">Studio</Link>
       </div>
 
       <header className="card">
         <p className="muted small" style={{ marginBottom: "0.5rem" }}>
-          PhotoPay MVP
+          Einfacher Foto-Verkauf fuer Auftrags-Shootings
         </p>
-        <h1 style={{ marginBottom: "0.5rem" }}>Swiss-first Foto-Auswahl, Bezahlung und Download</h1>
+        <h1 style={{ marginBottom: "0.5rem" }}>Fotos auswaehlen, bezahlen, sofort herunterladen</h1>
         <p className="muted" style={{ marginBottom: 0 }}>
-          Fokus: Auftrags-Shootings. Fotograf lädt hoch, Kunde wählt pro Package, zahlt via Twint/Stripe,
-          und lädt gekaufte Bilder herunter.
+          Du erstellst eine Galerie, gibst den Link weiter und deine Kundin oder dein Kunde waehlt ganz
+          einfach die gewuenschten Bilder aus.
         </p>
       </header>
 
       <section className="grid grid-2">
         <article className="card grid" style={{ gap: "0.6rem" }}>
-          <h2 style={{ marginBottom: 0 }}>1) Fotografen-Ansicht</h2>
+          <h2 style={{ marginBottom: 0 }}>1) Fuer Fotografen</h2>
           <p className="muted small" style={{ marginBottom: 0 }}>
-            Galerie anlegen, Demo-Bilder hinzufügen, Packages definieren und Galerie publizieren.
+            Galerie anlegen, Bilder bereitstellen, Paket festlegen und den Kundenlink teilen.
           </p>
           <Link className="btn" href="/studio" style={{ width: "fit-content" }}>
-            Studio öffnen
+            Studio starten
           </Link>
         </article>
 
         <article className="card grid" style={{ gap: "0.6rem" }}>
-          <h2 style={{ marginBottom: 0 }}>2) Kunden-Ansicht</h2>
+          <h2 style={{ marginBottom: 0 }}>2) Fuer Kunden</h2>
           <p className="muted small" style={{ marginBottom: 0 }}>
-            Nach dem Publizieren über den Public-Slug aufrufen, Passwort eingeben, auswählen und Checkout
-            starten.
+            Link oeffnen, Passwort eingeben, Lieblingsbilder auswaehlen und sicher bezahlen.
           </p>
           <p className="mono small" style={{ margin: 0 }}>
             /g/[publicSlug]

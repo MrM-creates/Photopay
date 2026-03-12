@@ -54,6 +54,29 @@ function createClientUuid() {
   return fallback;
 }
 
+function toFriendlyError(error: unknown, fallback: string) {
+  const raw = error instanceof Error ? error.message : "";
+  const lower = raw.toLowerCase();
+
+  if (lower.includes("failed to fetch") || lower.includes("network")) {
+    return "Ich konnte den Server gerade nicht erreichen. Bitte kurz warten und nochmal versuchen.";
+  }
+
+  if (raw.includes("VALIDATION_ERROR")) {
+    return "Bitte pruefe deine Eingaben. Manche Felder sind noch unvollstaendig.";
+  }
+
+  if (raw.includes("DB_ERROR")) {
+    return "Im Hintergrund ist ein technischer Fehler passiert. Bitte versuche es gleich nochmal.";
+  }
+
+  if (raw.includes("GALLERY_NOT_FOUND")) {
+    return "Diese Galerie wurde nicht gefunden. Bitte waehle eine Galerie aus der Liste.";
+  }
+
+  return fallback;
+}
+
 export default function StudioPage() {
   const [photographerId, setPhotographerId] = useState("");
 
@@ -147,7 +170,7 @@ export default function StudioPage() {
       const json = await response.json();
 
       if (!response.ok) {
-        throw new Error(json?.error?.message ?? "Packages konnten nicht geladen werden");
+        throw new Error(json?.error?.message ?? "Pakete konnten nicht geladen werden");
       }
 
       setPackages((json.packages ?? []) as PackageRow[]);
@@ -159,7 +182,7 @@ export default function StudioPage() {
     if (!photographerId) return;
 
     void loadGalleries().catch((error) => {
-      setNotice({ type: "error", text: error.message });
+      setNotice({ type: "error", text: toFriendlyError(error, "Galerien konnten nicht geladen werden.") });
     });
   }, [photographerId, loadGalleries]);
 
@@ -170,7 +193,7 @@ export default function StudioPage() {
     }
 
     void loadPackages(selectedGalleryId).catch((error) => {
-      setNotice({ type: "error", text: error.message });
+      setNotice({ type: "error", text: toFriendlyError(error, "Pakete konnten nicht geladen werden.") });
     });
   }, [selectedGalleryId, photographerId, loadPackages]);
 
@@ -196,9 +219,9 @@ export default function StudioPage() {
 
       await loadGalleries();
       setSelectedGalleryId(json.id);
-      setNotice({ type: "success", text: `Galerie erstellt: ${json.publicSlug}` });
+      setNotice({ type: "success", text: `Fertig. Deine Galerie ist erstellt (${json.publicSlug}).` });
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unbekannter Fehler" });
+      setNotice({ type: "error", text: toFriendlyError(error, "Die Galerie konnte leider nicht erstellt werden.") });
     } finally {
       setLoading(false);
     }
@@ -244,9 +267,9 @@ export default function StudioPage() {
       }
 
       await loadGalleries();
-      setNotice({ type: "success", text: `${json.uploaded} Assets hinzugefügt.` });
+      setNotice({ type: "success", text: `Fertig. ${json.uploaded} Bilder wurden hinzugefuegt.` });
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unbekannter Fehler" });
+      setNotice({ type: "error", text: toFriendlyError(error, "Die Bilder konnten nicht hinzugefuegt werden.") });
     } finally {
       setLoading(false);
     }
@@ -277,14 +300,14 @@ export default function StudioPage() {
       const json = await response.json();
 
       if (!response.ok) {
-        throw new Error(json?.error?.message ?? "Package konnte nicht erstellt werden");
+        throw new Error(json?.error?.message ?? "Paket konnte nicht erstellt werden");
       }
 
       await loadGalleries();
       await loadPackages(selectedGalleryId);
-      setNotice({ type: "success", text: `Package erstellt: ${json.name}` });
+      setNotice({ type: "success", text: `Fertig. Das Paket \"${json.name}\" wurde gespeichert.` });
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unbekannter Fehler" });
+      setNotice({ type: "error", text: toFriendlyError(error, "Das Paket konnte nicht gespeichert werden.") });
     } finally {
       setLoading(false);
     }
@@ -310,9 +333,9 @@ export default function StudioPage() {
       }
 
       await loadGalleries();
-      setNotice({ type: "success", text: "Galerie publiziert." });
+      setNotice({ type: "success", text: "Fertig. Die Galerie ist jetzt fuer Kunden freigegeben." });
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unbekannter Fehler" });
+      setNotice({ type: "error", text: toFriendlyError(error, "Die Galerie konnte nicht freigegeben werden.") });
     } finally {
       setLoading(false);
     }
@@ -321,20 +344,23 @@ export default function StudioPage() {
   return (
     <main className="grid" style={{ gap: "1rem" }}>
       <div className="nav">
-        <Link href="/">Home</Link>
+        <Link href="/">Start</Link>
         <Link href="/studio">Studio</Link>
       </div>
 
       <section className="card grid" style={{ gap: "0.7rem" }}>
         <div className="kv">
-          <h1 style={{ marginBottom: 0 }}>Fotografen-Studio</h1>
-          <span className="status">MVP</span>
+          <h1 style={{ marginBottom: 0 }}>Studio</h1>
+          <span className="status">Einfach gefuehrt</span>
         </div>
+        <p className="muted small" style={{ marginBottom: 0 }}>
+          Gehe einfach Schritt fuer Schritt durch. Du musst nichts Technisches wissen.
+        </p>
 
         <div className="grid grid-2">
           <div>
             <label className="label" htmlFor="photographer-id">
-              Fotograf-ID (MVP Header Auth)
+              Interne Nutzer-ID (automatisch)
             </label>
             <input
               id="photographer-id"
@@ -357,16 +383,18 @@ export default function StudioPage() {
               }}
               type="button"
             >
-              Neue ID
+              Neue interne ID
             </button>
             <button
               className="btn btn-secondary"
               onClick={() => {
-                void loadGalleries().catch((error) => setNotice({ type: "error", text: error.message }));
+                void loadGalleries().catch((error) =>
+                  setNotice({ type: "error", text: toFriendlyError(error, "Galerien konnten nicht geladen werden.") }),
+                );
               }}
               type="button"
             >
-              Reload
+              Aktualisieren
             </button>
           </div>
         </div>
@@ -405,7 +433,7 @@ export default function StudioPage() {
 
           <div>
             <label className="label" htmlFor="gallery-password">
-              Kunden-Passwort
+              Passwort fuer deine Kundinnen und Kunden
             </label>
             <input
               id="gallery-password"
@@ -424,7 +452,7 @@ export default function StudioPage() {
         <div className="card grid" style={{ gap: "0.6rem" }}>
           <div className="kv">
             <h2 style={{ marginBottom: 0 }}>Galerien</h2>
-            <span className="muted small">{galleries.length} total</span>
+            <span className="muted small">{galleries.length} gesamt</span>
           </div>
 
           {galleries.length === 0 ? (
@@ -449,7 +477,7 @@ export default function StudioPage() {
                   <strong>{gallery.title}</strong>
                   <span className="muted small mono">{gallery.publicSlug}</span>
                   <span className="small">
-                    Assets: {gallery.assetCount} | Packages: {gallery.packageCount}
+                    Bilder: {gallery.assetCount} | Pakete: {gallery.packageCount}
                   </span>
                   <span className={`status ${gallery.status === "published" ? "status-published" : "status-draft"}`}>
                     {gallery.status}
@@ -465,7 +493,7 @@ export default function StudioPage() {
         <form className="card grid" onSubmit={handleSeedAssets} style={{ gap: "0.6rem" }}>
           <h2 style={{ marginBottom: 0 }}>2. Demo-Bilder hinzufügen</h2>
           <p className="muted small" style={{ marginBottom: 0 }}>
-            Ein Dateiname pro Zeile. Für den MVP werden daraus wasserzeichenfähige Preview-Einträge erzeugt.
+            Fuer den Moment arbeiten wir mit Demo-Dateinamen (eine Zeile = ein Bild).
           </p>
 
           <div>
@@ -481,12 +509,15 @@ export default function StudioPage() {
           </div>
 
           <button className="btn" disabled={loading || !selectedGalleryId} type="submit">
-            Assets anlegen
+            Bilder hinzufuegen
           </button>
         </form>
 
         <form className="card grid" onSubmit={handleCreatePackage} style={{ gap: "0.6rem" }}>
-          <h2 style={{ marginBottom: 0 }}>3. Package erstellen</h2>
+          <h2 style={{ marginBottom: 0 }}>3. Paket festlegen</h2>
+          <p className="muted small" style={{ marginBottom: 0 }}>
+            Beispiel: 10 Bilder inklusive, jedes weitere Bild kostet extra.
+          </p>
 
           <div>
             <label className="label" htmlFor="package-name">
@@ -554,16 +585,16 @@ export default function StudioPage() {
           ) : null}
 
           <button className="btn" disabled={loading || !selectedGalleryId} type="submit">
-            Package speichern
+            Paket speichern
           </button>
         </form>
       </section>
 
       <section className="card grid" style={{ gap: "0.7rem" }}>
         <div className="kv">
-          <h2 style={{ marginBottom: 0 }}>4. Publizieren & testen</h2>
+          <h2 style={{ marginBottom: 0 }}>4. Freigeben & testen</h2>
           <button className="btn" disabled={loading || !selectedGalleryId} onClick={handlePublishGallery} type="button">
-            Galerie publizieren
+            Galerie freigeben
           </button>
         </div>
 
@@ -587,10 +618,10 @@ export default function StudioPage() {
 
         <hr className="hr" />
 
-        <h3 style={{ marginBottom: 0 }}>Packages der aktiven Galerie</h3>
+        <h3 style={{ marginBottom: 0 }}>Pakete der aktiven Galerie</h3>
         {packages.length === 0 ? (
           <p className="muted small" style={{ marginBottom: 0 }}>
-            Noch keine Packages vorhanden.
+            Noch keine Pakete vorhanden.
           </p>
         ) : (
           <div className="grid grid-3">
@@ -599,7 +630,7 @@ export default function StudioPage() {
                 <div className="kv" style={{ marginBottom: "0.45rem" }}>
                   <strong>{pkg.name}</strong>
                   <span className={`status ${pkg.active ? "status-published" : "status-draft"}`}>
-                    {pkg.active ? "active" : "inactive"}
+                    {pkg.active ? "aktiv" : "inaktiv"}
                   </span>
                 </div>
                 <p className="small muted" style={{ marginBottom: "0.35rem" }}>

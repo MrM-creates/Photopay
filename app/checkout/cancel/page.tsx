@@ -11,7 +11,7 @@ export default async function CheckoutCancelPage({
   return (
     <main className="grid" style={{ gap: "1rem" }}>
       <div className="nav">
-        <Link href="/">Home</Link>
+        <Link href="/">Start</Link>
         <Link href="/studio">Studio</Link>
       </div>
 
@@ -21,9 +21,7 @@ export default async function CheckoutCancelPage({
           Die Bestellung wurde nicht abgeschlossen. Du kannst den Checkout erneut starten.
         </p>
 
-        <p className="small mono" style={{ marginBottom: 0 }}>
-          order_id: {orderId}
-        </p>
+        {orderId !== "-" ? <p className="small muted">Bestellung: {orderId}</p> : null}
 
         <div className="toolbar">
           <Link className="btn" href="/">

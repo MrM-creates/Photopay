@@ -78,11 +78,11 @@ function formatChf(cents: number) {
 function getSelectionStatusText(status: CartItem["selectionStatus"]) {
   switch (status) {
     case "INCOMPLETE":
-      return "Unvollstaendig";
+      return "Noch nicht fertig";
     case "EXACT":
-      return "Vollstaendig";
+      return "Fertig";
     case "EXTRA_BLOCKED":
-      return "Zu viele (gesperrt)";
+      return "Zu viele Bilder";
     case "EXTRA_PRICED":
       return "Zusatzbilder";
     default:
@@ -113,9 +113,35 @@ function haveSameSelection(left: string[], right: string[]) {
   return left.every((assetId) => rightSet.has(assetId));
 }
 
+function toFriendlyPublicError(error: unknown, fallback: string) {
+  const raw = error instanceof Error ? error.message : "";
+  const lower = raw.toLowerCase();
+
+  if (lower.includes("failed to fetch") || lower.includes("network")) {
+    return "Ich konnte den Server gerade nicht erreichen. Bitte kurz warten und nochmal versuchen.";
+  }
+
+  if (raw.includes("Invalid password") || raw.includes("GALLERY_ACCESS_DENIED")) {
+    return "Das Passwort war leider nicht richtig. Bitte probiere es nochmal.";
+  }
+
+  if (raw.includes("CHECKOUT_NOT_ELIGIBLE")) {
+    return "Vor dem Bezahlen muessen alle Pakete fertig ausgewaehlt sein.";
+  }
+
+  if (raw.includes("EXTRA_NOT_ALLOWED")) {
+    return "In diesem Paket sind keine Zusatzbilder erlaubt.";
+  }
+
+  if (raw.includes("VALIDATION_ERROR")) {
+    return "Bitte pruefe deine Eingaben und versuche es erneut.";
+  }
+
+  return fallback;
+}
+
 export default function PublicGalleryClient({ publicSlug }: Props) {
   const [password, setPassword] = useState("muster123");
-  const [galleryAccessToken, setGalleryAccessToken] = useState("");
 
   const [galleryData, setGalleryData] = useState<GalleryResponse | null>(null);
   const [selectedPackageId, setSelectedPackageId] = useState("");
@@ -184,7 +210,7 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
     const json = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      throw new Error(json?.error?.message ?? "Request fehlgeschlagen");
+      throw new Error(json?.error?.message ?? "Etwas hat nicht geklappt");
     }
 
     return json;
@@ -207,17 +233,16 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
     setNotice(null);
 
     try {
-      const access = await fetchJson(`/api/public/galleries/${publicSlug}/access`, {
+      await fetchJson(`/api/public/galleries/${publicSlug}/access`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password }),
       });
 
-      setGalleryAccessToken(access.galleryAccessToken);
       await loadGallery();
-      setNotice({ type: "success", text: "Galerie freigeschaltet." });
+      setNotice({ type: "success", text: "Super, die Galerie ist jetzt offen." });
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unbekannter Fehler" });
+      setNotice({ type: "error", text: toFriendlyPublicError(error, "Die Galerie konnte nicht geoeffnet werden.") });
     } finally {
       setLoading(false);
     }
@@ -251,9 +276,9 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
       window.localStorage.setItem(`photopay_cart_token_${galleryData.gallery.publicSlug}`, json.cartAccessToken);
       await loadCart(json.cartId, json.cartAccessToken);
 
-      setNotice({ type: "success", text: "Warenkorb erstellt." });
+      setNotice({ type: "success", text: "Dein Warenkorb ist bereit." });
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unbekannter Fehler" });
+      setNotice({ type: "error", text: toFriendlyPublicError(error, "Der Warenkorb konnte nicht erstellt werden.") });
     } finally {
       setLoading(false);
     }
@@ -281,7 +306,7 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
 
   async function handleAddPackageItem() {
     if (!cartId || !cartToken || !selectedPackageId) {
-      setNotice({ type: "error", text: "Bitte zuerst Warenkorb erstellen und Package wählen." });
+      setNotice({ type: "error", text: "Bitte zuerst einen Warenkorb erstellen und ein Paket auswaehlen." });
       return;
     }
 
@@ -300,9 +325,9 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
 
       setSelectionDrafts((prev) => ({ ...prev, [json.cartPackageItemId]: [] }));
       await loadCart();
-      setNotice({ type: "success", text: "Package zum Warenkorb hinzugefügt." });
+      setNotice({ type: "success", text: "Paket wurde zum Warenkorb hinzugefuegt." });
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unbekannter Fehler" });
+      setNotice({ type: "error", text: toFriendlyPublicError(error, "Das Paket konnte nicht hinzugefuegt werden.") });
     } finally {
       setLoading(false);
     }
@@ -345,9 +370,9 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
       });
 
       await loadCart();
-      setNotice({ type: "success", text: json.message ?? "Auswahl gespeichert." });
+      setNotice({ type: "success", text: json.message ?? "Auswahl gespeichert. Sehr gut." });
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unbekannter Fehler" });
+      setNotice({ type: "error", text: toFriendlyPublicError(error, "Die Auswahl konnte nicht gespeichert werden.") });
     } finally {
       setLoading(false);
     }
@@ -374,7 +399,7 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
       window.localStorage.setItem(`photopay_order_cart_${json.orderId}`, cartToken);
       window.location.href = json.checkoutUrl;
     } catch (error) {
-      setNotice({ type: "error", text: error instanceof Error ? error.message : "Unbekannter Fehler" });
+      setNotice({ type: "error", text: toFriendlyPublicError(error, "Der Bezahlvorgang konnte nicht gestartet werden.") });
       setLoading(false);
     }
   }
@@ -382,7 +407,7 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
   return (
     <main className="grid" style={{ gap: "1rem" }}>
       <div className="nav">
-        <Link href="/">Home</Link>
+        <Link href="/">Start</Link>
         <Link href="/studio">Studio</Link>
       </div>
 
@@ -392,18 +417,14 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
           <span className="status">/{publicSlug || "..."}</span>
         </div>
         <p className="muted small" style={{ marginBottom: 0 }}>
-          Passwort eingeben, Bilder pro Package auswählen, Checkout starten.
+          Einfach dem Ablauf folgen: Passwort, Bilder waehlen, speichern und dann bezahlen.
         </p>
-
-        {galleryAccessToken ? (
-          <div className="notice notice-success small mono">Access token erhalten: {galleryAccessToken.slice(0, 12)}...</div>
-        ) : null}
       </section>
 
       {notice ? <div className={`notice notice-${notice.type}`}>{notice.text}</div> : null}
 
       <form className="card grid" onSubmit={handleAccess} style={{ gap: "0.6rem" }}>
-        <h2 style={{ marginBottom: 0 }}>1. Passwort prüfen</h2>
+        <h2 style={{ marginBottom: 0 }}>1. Zugang zur Galerie</h2>
         <div className="grid grid-2">
           <div>
             <label className="label" htmlFor="customer-password">
@@ -418,12 +439,12 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
             />
           </div>
           <div className="toolbar" style={{ alignItems: "end" }}>
-            <button className="btn" disabled={loading || !publicSlug} type="submit">
-              Zugriff freischalten
-            </button>
+              <button className="btn" disabled={loading || !publicSlug} type="submit">
+              Galerie oeffnen
+              </button>
+            </div>
           </div>
-        </div>
-      </form>
+        </form>
 
       {galleryData ? (
         <section className="card grid" style={{ gap: "0.7rem" }}>
@@ -433,16 +454,18 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
           </p>
 
           <div className="grid grid-3">
-            <div className="notice notice-muted small">Assets: {assets.length}</div>
-            <div className="notice notice-muted small">Packages: {packages.length}</div>
+            <div className="notice notice-muted small">Bilder: {assets.length}</div>
+            <div className="notice notice-muted small">Pakete: {packages.length}</div>
             <button
               className="btn btn-secondary"
               onClick={() => {
-                void loadGallery().catch((error) => setNotice({ type: "error", text: error.message }));
+                void loadGallery().catch((error) =>
+                  setNotice({ type: "error", text: toFriendlyPublicError(error, "Die Galerie konnte nicht geladen werden.") }),
+                );
               }}
               type="button"
             >
-              Galerie reload
+              Galerie aktualisieren
             </button>
           </div>
 
@@ -482,23 +505,17 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
                   className="btn btn-secondary"
                   onClick={(event) => {
                     event.preventDefault();
-                    void loadCart().catch((error) => setNotice({ type: "error", text: error.message }));
+                    void loadCart().catch((error) =>
+                      setNotice({ type: "error", text: toFriendlyPublicError(error, "Der Warenkorb konnte nicht geladen werden.") }),
+                    );
                   }}
                   type="button"
                 >
-                  Warenkorb reload
+                  Warenkorb aktualisieren
                 </button>
               ) : null}
             </div>
           </form>
-
-          {cartId ? (
-            <div className="notice notice-muted small mono">
-              cartId: {cartId}
-              <br />
-              cartToken: {cartToken}
-            </div>
-          ) : null}
 
           {cartId ? (
             <>
@@ -507,7 +524,7 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
               <div className="grid grid-2">
                 <div>
                   <label className="label" htmlFor="package-select">
-                    Package hinzufügen
+                    Paket auswaehlen
                   </label>
                   <select
                     className="select"
@@ -524,7 +541,7 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
                 </div>
                 <div className="toolbar" style={{ alignItems: "end" }}>
                   <button className="btn" disabled={loading || !selectedPackage} onClick={handleAddPackageItem} type="button">
-                    Zum Warenkorb
+                    Paket zum Warenkorb
                   </button>
                 </div>
               </div>
@@ -560,7 +577,7 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
                         </p>
                         {hasUnsavedChanges ? (
                           <p className="small" style={{ marginBottom: "0.5rem", color: "var(--danger)" }}>
-                            Nicht gespeichert. Bitte Auswahl speichern klicken.
+                            Aenderungen sind noch nicht gespeichert.
                           </p>
                         ) : (
                           <p className="small muted" style={{ marginBottom: "0.5rem" }}>
@@ -593,7 +610,7 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
                             disabled={loading}
                             type="button"
                           >
-                            Auswahl speichern
+                            Auswahl jetzt speichern
                           </button>
                         </div>
                       </article>
@@ -613,7 +630,7 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
                     <strong>{formatChf(liveCartSummary?.totalCents ?? cartView.totalCents)}</strong>
                   </div>
                   <p className="small muted" style={{ marginTop: "0.35rem", marginBottom: "0.55rem" }}>
-                    Checkout moeglich: {liveCartSummary?.checkoutEligible ? "Ja" : "Nein"}
+                    Bereit zum Bezahlen: {liveCartSummary?.checkoutEligible ? "Ja" : "Noch nicht"}
                   </p>
                   {liveCartSummary && liveCartSummary.unsavedCount > 0 ? (
                     <p className="small" style={{ marginTop: 0, color: "var(--danger)" }}>
@@ -622,11 +639,11 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
                   ) : null}
                   {liveCartSummary && liveCartSummary.blockingCount > 0 ? (
                     <p className="small" style={{ marginTop: 0, color: "var(--danger)" }}>
-                      {liveCartSummary.blockingCount} Paket(e) sind noch unvollstaendig.
+                      {liveCartSummary.blockingCount} Paket(e) brauchen noch mehr ausgewaehlte Bilder.
                     </p>
                   ) : null}
                   <button className="btn" disabled={!liveCartSummary?.checkoutEligible || loading} onClick={handleCheckout} type="button">
-                    Checkout starten
+                    Weiter zur Bezahlung
                   </button>
                 </div>
               ) : null}
@@ -636,7 +653,7 @@ export default function PublicGalleryClient({ publicSlug }: Props) {
       ) : (
         <section className="card">
           <p className="muted small" style={{ marginBottom: 0 }}>
-            Nach erfolgreicher Passwortprüfung erscheint hier Galerie, Packages und Warenkorb.
+            Nach dem Oeffnen der Galerie erscheint hier alles Weitere automatisch.
           </p>
         </section>
       )}
