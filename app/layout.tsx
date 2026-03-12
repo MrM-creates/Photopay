@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
-import PwaClient from "./components/PwaClient";
 
 export const metadata: Metadata = {
   title: "PhotoPay MVP",
@@ -21,7 +20,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="de-CH">
       <body>
         {children}
-        <PwaClient />
       </body>
     </html>
   );

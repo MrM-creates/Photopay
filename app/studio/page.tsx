@@ -1483,6 +1483,9 @@ export default function StudioPage() {
           </p>
         </div>
         <nav aria-label="Schritte" className="wizard-nav">
+          <Link className="wizard-step wizard-step-open wizard-step-link" href="/">
+            <span className="wizard-step-label">Start</span>
+          </Link>
           {wizardSteps.map((step) => {
             const isEnabled = isStepAccessible(step.id);
             const stepState = getStepState(step.id);
@@ -1490,6 +1493,7 @@ export default function StudioPage() {
 
             return (
               <button
+                aria-current={stepState === "active" ? "step" : undefined}
                 className={`wizard-step wizard-step-${stepState}`}
                 disabled={loading || (!isEnabled && stepState !== "active")}
                 key={step.id}
@@ -1509,6 +1513,14 @@ export default function StudioPage() {
               </button>
             );
           })}
+          <Link className="wizard-step wizard-step-open wizard-step-link" href="/settings">
+            <span className="wizard-step-label">
+              <span aria-hidden="true" className="wizard-step-gear">
+                &#9881;
+              </span>
+              Einstellungen
+            </span>
+          </Link>
         </nav>
       </header>
 
@@ -1966,6 +1978,9 @@ export default function StudioPage() {
                         </div>
                       ))}
                     </div>
+                    <p className="small muted" style={{ marginBottom: 0 }}>
+                      Ausgewählt: {selectedFiles.length} {selectedFiles.length === 1 ? "Bild" : "Bilder"}.
+                    </p>
                   </>
                 ) : (
                   <p className="small muted" style={{ marginBottom: 0 }}>
