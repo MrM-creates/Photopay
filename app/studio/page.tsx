@@ -11,6 +11,7 @@ type Gallery = {
   publicSlug: string;
   status: "draft" | "published" | "archived";
   publishedAt: string | null;
+  coverAssetId?: string | null;
   packageCount: number;
   assetCount: number;
 };
@@ -41,6 +42,15 @@ type UploadedAssetFile = {
   storageKeyOriginal: string;
   storageKeyPreview: string;
   watermarkApplied: boolean;
+};
+
+type ManagedAsset = {
+  id: string;
+  filename: string;
+  previewKey: string;
+  previewUrl: string | null;
+  watermark: boolean;
+  sortOrder: number;
 };
 
 type WizardStepId = "create" | "assets" | "packages" | "share" | "summary";
@@ -162,6 +172,7 @@ export default function StudioPage() {
 
   const [galleries, setGalleries] = useState<Gallery[]>([]);
   const [selectedGalleryId, setSelectedGalleryId] = useState("");
+  const [projectAssets, setProjectAssets] = useState<ManagedAsset[]>([]);
   const [packages, setPackages] = useState<PackageRow[]>([]);
 
   const [galleryTitle, setGalleryTitle] = useState("Babyshooting Moritz 20260329");
@@ -384,6 +395,27 @@ export default function StudioPage() {
     [withPhotographerHeaders],
   );
 
+  const loadProjectAssets = useCallback(
+    async (galleryId: string) => {
+      if (!galleryId) {
+        setProjectAssets([]);
+        return;
+      }
+
+      const response = await withPhotographerHeaders(`/api/galleries/${galleryId}/assets`, {
+        method: "GET",
+      });
+      const json = await response.json();
+
+      if (!response.ok) {
+        throw new Error(json?.error?.message ?? "Bilder konnten nicht geladen werden");
+      }
+
+      setProjectAssets((json.assets ?? []) as ManagedAsset[]);
+    },
+    [withPhotographerHeaders],
+  );
+
   useEffect(() => {
     if (!photographerId) return;
 
@@ -395,13 +427,17 @@ export default function StudioPage() {
   useEffect(() => {
     if (!selectedGalleryId || !photographerId) {
       setPackages([]);
+      setProjectAssets([]);
       return;
     }
 
     void loadPackages(selectedGalleryId).catch((error) => {
       setNotice({ type: "error", text: toFriendlyError(error, "Pakete konnten nicht geladen werden.") });
     });
-  }, [selectedGalleryId, photographerId, loadPackages]);
+    void loadProjectAssets(selectedGalleryId).catch((error) => {
+      setNotice({ type: "error", text: toFriendlyError(error, "Bilder konnten nicht geladen werden.") });
+    });
+  }, [selectedGalleryId, photographerId, loadPackages, loadProjectAssets]);
 
   useEffect(() => {
     if (!requestedProjectId || galleries.length === 0) return;
@@ -498,12 +534,104 @@ export default function StudioPage() {
       }
 
       await loadGalleries();
+      await loadProjectAssets(selectedGalleryId);
       setSelectedFiles([]);
       setNotice(null);
       return true;
     } catch (error) {
       setNotice({ type: "error", text: toFriendlyError(error, "Die Bilder konnten nicht gespeichert werden. Bitte versuche es erneut.") });
       return false;
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function persistAssetOrder(orderedAssetIds: string[]) {
+    if (!selectedGalleryId) return false;
+
+    const response = await withPhotographerHeaders(`/api/galleries/${selectedGalleryId}/assets`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        operation: "reorder",
+        orderedAssetIds,
+      }),
+    });
+    const json = await response.json();
+
+    if (!response.ok) {
+      throw new Error(json?.error?.message ?? "Reihenfolge konnte nicht gespeichert werden");
+    }
+
+    await loadProjectAssets(selectedGalleryId);
+    await loadGalleries();
+    return true;
+  }
+
+  async function moveAsset(assetId: string, direction: "up" | "down") {
+    const index = projectAssets.findIndex((asset) => asset.id === assetId);
+    if (index < 0) return;
+    const nextIndex = direction === "up" ? index - 1 : index + 1;
+    if (nextIndex < 0 || nextIndex >= projectAssets.length) return;
+
+    const reordered = [...projectAssets];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(nextIndex, 0, moved);
+
+    setLoading(true);
+    setNotice(null);
+    try {
+      await persistAssetOrder(reordered.map((asset) => asset.id));
+    } catch (error) {
+      setNotice({ type: "error", text: toFriendlyError(error, "Die Reihenfolge konnte nicht gespeichert werden.") });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function setCoverAsset(assetId: string) {
+    if (!selectedGalleryId) return;
+
+    setLoading(true);
+    setNotice(null);
+    try {
+      const response = await withPhotographerHeaders(`/api/galleries/${selectedGalleryId}/assets`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          operation: "cover",
+          assetId,
+        }),
+      });
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json?.error?.message ?? "Cover konnte nicht gespeichert werden");
+      }
+
+      await loadGalleries();
+    } catch (error) {
+      setNotice({ type: "error", text: toFriendlyError(error, "Cover konnte nicht gespeichert werden.") });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteAsset(assetId: string) {
+    if (!selectedGalleryId) return;
+
+    setLoading(true);
+    setNotice(null);
+    try {
+      const response = await withPhotographerHeaders(`/api/galleries/${selectedGalleryId}/assets/${assetId}`, {
+        method: "DELETE",
+      });
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json?.error?.message ?? "Bild konnte nicht entfernt werden");
+      }
+
+      await loadProjectAssets(selectedGalleryId);
+      await loadGalleries();
+    } catch (error) {
+      setNotice({ type: "error", text: toFriendlyError(error, "Bild konnte nicht entfernt werden.") });
     } finally {
       setLoading(false);
     }
@@ -828,6 +956,72 @@ export default function StudioPage() {
                   </p>
                 )}
               </form>
+
+              {projectAssets.length > 0 ? (
+                <div className="grid" style={{ gap: "0.6rem" }}>
+                  <h3 style={{ marginBottom: 0 }}>Bilder im Projekt</h3>
+                  <div className="project-assets-grid">
+                    {projectAssets.map((asset, index) => {
+                      const isCover = selectedGallery?.coverAssetId === asset.id;
+                      return (
+                        <article className="project-asset-card" key={asset.id}>
+                          <div className="project-asset-preview-wrap">
+                            {asset.previewUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img alt={asset.filename} className="project-asset-preview" src={asset.previewUrl} />
+                            ) : (
+                              <div className="project-asset-placeholder small muted">Kein Preview</div>
+                            )}
+                          </div>
+                          <p className="small project-asset-name">{asset.filename}</p>
+                          <div className="project-asset-actions">
+                            <button
+                              className="btn btn-secondary"
+                              disabled={loading || index === 0}
+                              onClick={() => {
+                                void moveAsset(asset.id, "up");
+                              }}
+                              type="button"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              className="btn btn-secondary"
+                              disabled={loading || index === projectAssets.length - 1}
+                              onClick={() => {
+                                void moveAsset(asset.id, "down");
+                              }}
+                              type="button"
+                            >
+                              ↓
+                            </button>
+                            <button
+                              className={`btn ${isCover ? "" : "btn-secondary"}`}
+                              disabled={loading}
+                              onClick={() => {
+                                void setCoverAsset(asset.id);
+                              }}
+                              type="button"
+                            >
+                              {isCover ? "Cover" : "Als Cover"}
+                            </button>
+                            <button
+                              className="btn btn-secondary"
+                              disabled={loading}
+                              onClick={() => {
+                                void deleteAsset(asset.id);
+                              }}
+                              type="button"
+                            >
+                              Entfernen
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
             </>
           )}
         </section>

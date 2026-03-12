@@ -22,7 +22,7 @@ export async function GET(request: Request) {
 
   const galleriesQuery = await supabase
     .from("galleries")
-    .select("id,title,description,public_slug,status,published_at,created_at")
+    .select("id,title,description,public_slug,status,published_at,cover_asset_id,created_at")
     .eq("photographer_id", auth.photographerId)
     .order("created_at", { ascending: false });
 
@@ -75,6 +75,7 @@ export async function GET(request: Request) {
       publicSlug: gallery.public_slug,
       status: gallery.status,
       publishedAt: gallery.published_at,
+      coverAssetId: gallery.cover_asset_id,
       createdAt: gallery.created_at,
       packageCount: packageCountByGallery.get(gallery.id) ?? 0,
       assetCount: assetCountByGallery.get(gallery.id) ?? 0,
