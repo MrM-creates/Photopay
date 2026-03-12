@@ -8,32 +8,40 @@ export default function HomePage() {
         <Link href="/studio">Studio</Link>
       </div>
 
-      <header className="card">
-        <p className="muted small" style={{ marginBottom: "0.5rem" }}>
-          Einfacher Foto-Verkauf fuer Auftrags-Shootings
+      <header className="card app-hero">
+        <span className="pill">PhotoPay fuer Fotografen</span>
+        <h1 className="hero-title" style={{ marginBottom: 0 }}>
+          Dein Shooting in 4 klaren Schritten online verkaufen
+        </h1>
+        <p className="muted" style={{ marginBottom: 0, maxWidth: "62ch" }}>
+          Galerie anlegen, Bilder bereitstellen, Pakete festlegen und Kundenlink teilen. Deine Kundschaft waehlt, bezahlt
+          und laedt danach die gekauften Fotos herunter.
         </p>
-        <h1 style={{ marginBottom: "0.5rem" }}>Fotos auswaehlen, bezahlen, sofort herunterladen</h1>
-        <p className="muted" style={{ marginBottom: 0 }}>
-          Du erstellst eine Galerie, gibst den Link weiter und deine Kundin oder dein Kunde waehlt ganz
-          einfach die gewuenschten Bilder aus.
-        </p>
+        <div className="toolbar">
+          <Link className="btn" href="/studio">
+            Studio oeffnen
+          </Link>
+          <Link className="btn btn-secondary" href="/studio#sharing">
+            Kundenlink vorbereiten
+          </Link>
+        </div>
       </header>
 
       <section className="grid grid-2">
-        <article className="card grid" style={{ gap: "0.6rem" }}>
-          <h2 style={{ marginBottom: 0 }}>1) Fuer Fotografen</h2>
-          <p className="muted small" style={{ marginBottom: 0 }}>
-            Galerie anlegen, Bilder bereitstellen, Paket festlegen und den Kundenlink teilen.
+        <article className="card">
+          <h2 style={{ marginBottom: "0.45rem" }}>Fotografen-Bereich</h2>
+          <p className="helper" style={{ marginBottom: "0.65rem" }}>
+            Du arbeitest in einem gefuehrten Studio mit klaren Menues:
           </p>
-          <Link className="btn" href="/studio" style={{ width: "fit-content" }}>
-            Studio starten
-          </Link>
+          <p className="small muted" style={{ marginBottom: 0 }}>
+            Uebersicht, Galerien, Pakete & Preise, Kundenlinks, Einstellungen.
+          </p>
         </article>
 
-        <article className="card grid" style={{ gap: "0.6rem" }}>
-          <h2 style={{ marginBottom: 0 }}>2) Fuer Kunden</h2>
-          <p className="muted small" style={{ marginBottom: 0 }}>
-            Link oeffnen, Passwort eingeben, Lieblingsbilder auswaehlen und sicher bezahlen.
+        <article className="card">
+          <h2 style={{ marginBottom: "0.45rem" }}>Kunden-Bereich</h2>
+          <p className="helper" style={{ marginBottom: "0.65rem" }}>
+            Kundinnen und Kunden sehen nur die Galerie ueber ihren persoenlichen Link.
           </p>
           <p className="mono small" style={{ margin: 0 }}>
             /g/[publicSlug]
