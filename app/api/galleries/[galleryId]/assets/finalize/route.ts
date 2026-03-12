@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { readPhotographerId } from "@/lib/auth";
+import { ensureProjectContext, readPhotographerId } from "@/lib/auth";
 import { fail, ok } from "@/lib/http";
 import { createAdminClient } from "@/lib/supabase";
 
@@ -33,6 +33,9 @@ export async function POST(request: Request, context: RouteContext) {
   if ("error" in auth) return auth.error;
 
   const { galleryId } = await context.params;
+  const projectContext = ensureProjectContext(request.headers, galleryId);
+  if ("error" in projectContext) return projectContext.error;
+
   const payload = await request.json().catch(() => null);
   const parsed = finalizeSchema.safeParse(payload);
 
@@ -105,6 +108,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   return ok(
     {
+      projectId: galleryId,
       uploaded: insert.data.length,
       assets: insert.data.map((asset) => ({
         id: asset.id,

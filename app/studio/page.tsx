@@ -111,6 +111,10 @@ function toFriendlyError(error: unknown, fallback: string) {
     return "Es ist ein technischer Fehler aufgetreten. Bitte versuche es erneut.";
   }
 
+  if (raw.includes("CONTEXT_MISMATCH")) {
+    return "Das aktive Projekt stimmt nicht mehr mit dem Speichervorgang überein. Bitte Projekt kurz neu öffnen und erneut speichern.";
+  }
+
   if (raw.includes("GALLERY_NOT_FOUND")) {
     return "Dieses Projekt wurde nicht gefunden. Bitte wähle ein Projekt aus der Liste.";
   }
@@ -199,6 +203,7 @@ export default function StudioPage() {
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<StudioNotice | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const projectWriteQueueRef = useRef<Map<string, Promise<void>>>(new Map());
 
   const selectedGallery = useMemo(
     () => galleries.find((gallery) => gallery.id === selectedGalleryId) ?? null,
@@ -380,6 +385,42 @@ export default function StudioPage() {
     [photographerId],
   );
 
+  const withProjectHeaders = useCallback(
+    async (projectId: string, input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      headers.set("x-project-id", projectId);
+      return withPhotographerHeaders(input, {
+        ...init,
+        headers,
+      });
+    },
+    [withPhotographerHeaders],
+  );
+
+  async function runWithProjectWriteLock<T>(projectId: string, task: () => Promise<T>): Promise<T> {
+    const currentTail = projectWriteQueueRef.current.get(projectId) ?? Promise.resolve();
+    let releaseTail: () => void = () => undefined;
+    const nextTail = new Promise<void>((resolve) => {
+      releaseTail = resolve;
+    });
+
+    projectWriteQueueRef.current.set(
+      projectId,
+      currentTail.then(
+        () => nextTail,
+        () => nextTail,
+      ),
+    );
+
+    await currentTail.catch(() => undefined);
+
+    try {
+      return await task();
+    } finally {
+      releaseTail();
+    }
+  }
+
   const loadGalleries = useCallback(async () => {
     if (!photographerId) return;
 
@@ -522,59 +563,91 @@ export default function StudioPage() {
       return false;
     }
 
-    setLoading(true);
-    setNotice(null);
+    const projectId = selectedGalleryId;
+    const filesSnapshot = [...selectedFiles];
 
-    try {
-      const uploadedFiles: UploadedAssetFile[] = [];
+    return runWithProjectWriteLock(projectId, async () => {
+      setLoading(true);
+      setNotice(null);
 
-      for (const file of selectedFiles) {
-        const dimensions = await readImageDimensions(file);
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("width", String(dimensions.width));
-        formData.append("height", String(dimensions.height));
+      try {
+        const uploadedFiles: UploadedAssetFile[] = [];
+        const failedFileKeys = new Set<string>();
 
-        const uploadResponse = await withPhotographerHeaders(`/api/galleries/${selectedGalleryId}/assets/upload`, {
-          method: "POST",
-          body: formData,
-        });
-        const uploadJson = await uploadResponse.json();
+        for (const file of filesSnapshot) {
+          const dimensions = await readImageDimensions(file);
+          const formData = new FormData();
+          formData.append("file", file);
+          formData.append("width", String(dimensions.width));
+          formData.append("height", String(dimensions.height));
 
-        if (!uploadResponse.ok) {
-          throw new Error(uploadJson?.error?.message ?? `Upload fehlgeschlagen (${file.name})`);
+          const uploadResponse = await withProjectHeaders(projectId, `/api/galleries/${projectId}/assets/upload`, {
+            method: "POST",
+            body: formData,
+          });
+          const uploadJson = await uploadResponse.json();
+
+          if (!uploadResponse.ok) {
+            const code = uploadJson?.error?.code as string | undefined;
+            if (code === "CONTEXT_MISMATCH") {
+              throw new Error(code);
+            }
+
+            failedFileKeys.add(fileFingerprint(file));
+            continue;
+          }
+
+          uploadedFiles.push(uploadJson.file as UploadedAssetFile);
         }
 
-        uploadedFiles.push(uploadJson.file as UploadedAssetFile);
+        if (uploadedFiles.length === 0) {
+          setNotice({
+            type: "error",
+            text: "Die Bilder konnten nicht gespeichert werden. Bitte versuche es erneut.",
+          });
+          return false;
+        }
+
+        const response = await withProjectHeaders(projectId, `/api/galleries/${projectId}/assets/finalize`, {
+          method: "POST",
+          body: JSON.stringify({ files: uploadedFiles }),
+        });
+        const json = await response.json();
+
+        if (!response.ok) {
+          throw new Error(json?.error?.code ?? json?.error?.message ?? "Assets konnten nicht angelegt werden");
+        }
+
+        await loadGalleries();
+        await loadProjectAssets(projectId);
+
+        if (failedFileKeys.size > 0) {
+          setSelectedFiles((previous) =>
+            previous.filter((file) => failedFileKeys.has(fileFingerprint(file))),
+          );
+          setNotice({
+            type: "error",
+            text: `${uploadedFiles.length} Bild(er) wurden hinzugefügt, ${failedFileKeys.size} konnten nicht gespeichert werden.`,
+          });
+          return false;
+        } else {
+          setSelectedFiles([]);
+          setNotice(null);
+          return true;
+        }
+      } catch (error) {
+        setNotice({ type: "error", text: toFriendlyError(error, "Die Bilder konnten nicht gespeichert werden. Bitte versuche es erneut.") });
+        return false;
+      } finally {
+        setLoading(false);
       }
-
-      const response = await withPhotographerHeaders(`/api/galleries/${selectedGalleryId}/assets/finalize`, {
-        method: "POST",
-        body: JSON.stringify({ files: uploadedFiles }),
-      });
-      const json = await response.json();
-
-      if (!response.ok) {
-        throw new Error(json?.error?.message ?? "Assets konnten nicht angelegt werden");
-      }
-
-      await loadGalleries();
-      await loadProjectAssets(selectedGalleryId);
-      setSelectedFiles([]);
-      setNotice(null);
-      return true;
-    } catch (error) {
-      setNotice({ type: "error", text: toFriendlyError(error, "Die Bilder konnten nicht gespeichert werden. Bitte versuche es erneut.") });
-      return false;
-    } finally {
-      setLoading(false);
-    }
+    });
   }
 
-  async function persistAssetOrder(orderedAssetIds: string[]) {
-    if (!selectedGalleryId) return false;
+  async function persistAssetOrder(projectId: string, orderedAssetIds: string[]) {
+    if (!projectId) return false;
 
-    const response = await withPhotographerHeaders(`/api/galleries/${selectedGalleryId}/assets`, {
+    const response = await withProjectHeaders(projectId, `/api/galleries/${projectId}/assets`, {
       method: "PATCH",
       body: JSON.stringify({
         operation: "reorder",
@@ -587,13 +660,14 @@ export default function StudioPage() {
       throw new Error(json?.error?.message ?? "Reihenfolge konnte nicht gespeichert werden");
     }
 
-    await loadProjectAssets(selectedGalleryId);
+    await loadProjectAssets(projectId);
     await loadGalleries();
     return true;
   }
 
   async function reorderAssetsByDrag(targetAssetId: string) {
-    if (!dragAssetId || dragAssetId === targetAssetId) return;
+    if (!selectedGalleryId || !dragAssetId || dragAssetId === targetAssetId) return;
+    const projectId = selectedGalleryId;
 
     const fromIndex = projectAssets.findIndex((asset) => asset.id === dragAssetId);
     const toIndex = projectAssets.findIndex((asset) => asset.id === targetAssetId);
@@ -603,68 +677,76 @@ export default function StudioPage() {
     const [moved] = reordered.splice(fromIndex, 1);
     reordered.splice(toIndex, 0, moved);
 
-    setProjectAssets(reordered);
-    setLoading(true);
-    setNotice(null);
+    await runWithProjectWriteLock(projectId, async () => {
+      setProjectAssets(reordered);
+      setLoading(true);
+      setNotice(null);
 
-    try {
-      await persistAssetOrder(reordered.map((asset) => asset.id));
-    } catch (error) {
-      setNotice({ type: "error", text: toFriendlyError(error, "Die Reihenfolge konnte nicht gespeichert werden.") });
-      await loadProjectAssets(selectedGalleryId);
-    } finally {
-      setLoading(false);
-      setDragAssetId(null);
-    }
+      try {
+        await persistAssetOrder(projectId, reordered.map((asset) => asset.id));
+      } catch (error) {
+        setNotice({ type: "error", text: toFriendlyError(error, "Die Reihenfolge konnte nicht gespeichert werden.") });
+        await loadProjectAssets(projectId);
+      } finally {
+        setLoading(false);
+        setDragAssetId(null);
+      }
+    });
   }
 
   async function setCoverAsset(assetId: string) {
     if (!selectedGalleryId) return;
+    const projectId = selectedGalleryId;
 
-    setLoading(true);
-    setNotice(null);
-    try {
-      const response = await withPhotographerHeaders(`/api/galleries/${selectedGalleryId}/assets`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          operation: "cover",
-          assetId,
-        }),
-      });
-      const json = await response.json();
-      if (!response.ok) {
-        throw new Error(json?.error?.message ?? "Cover konnte nicht gespeichert werden");
+    await runWithProjectWriteLock(projectId, async () => {
+      setLoading(true);
+      setNotice(null);
+      try {
+        const response = await withProjectHeaders(projectId, `/api/galleries/${projectId}/assets`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            operation: "cover",
+            assetId,
+          }),
+        });
+        const json = await response.json();
+        if (!response.ok) {
+          throw new Error(json?.error?.code ?? json?.error?.message ?? "Cover konnte nicht gespeichert werden");
+        }
+
+        await loadGalleries();
+      } catch (error) {
+        setNotice({ type: "error", text: toFriendlyError(error, "Cover konnte nicht gespeichert werden.") });
+      } finally {
+        setLoading(false);
       }
-
-      await loadGalleries();
-    } catch (error) {
-      setNotice({ type: "error", text: toFriendlyError(error, "Cover konnte nicht gespeichert werden.") });
-    } finally {
-      setLoading(false);
-    }
+    });
   }
 
   async function deleteAsset(assetId: string) {
     if (!selectedGalleryId) return;
+    const projectId = selectedGalleryId;
 
-    setLoading(true);
-    setNotice(null);
-    try {
-      const response = await withPhotographerHeaders(`/api/galleries/${selectedGalleryId}/assets/${assetId}`, {
-        method: "DELETE",
-      });
-      const json = await response.json();
-      if (!response.ok) {
-        throw new Error(json?.error?.message ?? "Bild konnte nicht entfernt werden");
+    await runWithProjectWriteLock(projectId, async () => {
+      setLoading(true);
+      setNotice(null);
+      try {
+        const response = await withProjectHeaders(projectId, `/api/galleries/${projectId}/assets/${assetId}`, {
+          method: "DELETE",
+        });
+        const json = await response.json();
+        if (!response.ok) {
+          throw new Error(json?.error?.code ?? json?.error?.message ?? "Bild konnte nicht entfernt werden");
+        }
+
+        await loadProjectAssets(projectId);
+        await loadGalleries();
+      } catch (error) {
+        setNotice({ type: "error", text: toFriendlyError(error, "Bild konnte nicht entfernt werden.") });
+      } finally {
+        setLoading(false);
       }
-
-      await loadProjectAssets(selectedGalleryId);
-      await loadGalleries();
-    } catch (error) {
-      setNotice({ type: "error", text: toFriendlyError(error, "Bild konnte nicht entfernt werden.") });
-    } finally {
-      setLoading(false);
-    }
+    });
   }
 
   async function handleSeedAssets(event: FormEvent<HTMLFormElement>) {
@@ -676,6 +758,8 @@ export default function StudioPage() {
   }
 
   async function handleNext() {
+    if (loading) return;
+
     if (activeStep === "assets" && selectedFiles.length > 0) {
       const saved = await persistSelectedFiles();
       if (saved) {
@@ -700,35 +784,39 @@ export default function StudioPage() {
       return;
     }
 
-    setLoading(true);
-    setNotice(null);
+    const projectId = selectedGalleryId;
 
-    try {
-      const response = await withPhotographerHeaders(`/api/galleries/${selectedGalleryId}/packages`, {
-        method: "POST",
-        body: JSON.stringify({
-          name: packageName,
-          priceCents: Math.round(Number(packagePrice) * 100),
-          includedCount: Number(includedCount),
-          allowExtra,
-          extraUnitPriceCents: allowExtra ? Math.round(Number(extraPrice) * 100) : null,
-        }),
-      });
-      const json = await response.json();
-
-      if (!response.ok) {
-        throw new Error(json?.error?.message ?? "Paket konnte nicht erstellt werden");
-      }
-
-      await loadGalleries();
-      await loadPackages(selectedGalleryId);
+    await runWithProjectWriteLock(projectId, async () => {
+      setLoading(true);
       setNotice(null);
-      setActiveStep("share");
-    } catch (error) {
-      setNotice({ type: "error", text: toFriendlyError(error, "Das Paket konnte nicht gespeichert werden. Bitte prüfe die Eingaben.") });
-    } finally {
-      setLoading(false);
-    }
+
+      try {
+        const response = await withProjectHeaders(projectId, `/api/galleries/${projectId}/packages`, {
+          method: "POST",
+          body: JSON.stringify({
+            name: packageName,
+            priceCents: Math.round(Number(packagePrice) * 100),
+            includedCount: Number(includedCount),
+            allowExtra,
+            extraUnitPriceCents: allowExtra ? Math.round(Number(extraPrice) * 100) : null,
+          }),
+        });
+        const json = await response.json();
+
+        if (!response.ok) {
+          throw new Error(json?.error?.code ?? json?.error?.message ?? "Paket konnte nicht erstellt werden");
+        }
+
+        await loadGalleries();
+        await loadPackages(projectId);
+        setNotice(null);
+        setActiveStep("share");
+      } catch (error) {
+        setNotice({ type: "error", text: toFriendlyError(error, "Das Paket konnte nicht gespeichert werden. Bitte prüfe die Eingaben.") });
+      } finally {
+        setLoading(false);
+      }
+    });
   }
 
   async function handlePublishGallery() {
@@ -736,28 +824,31 @@ export default function StudioPage() {
       setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
       return;
     }
+    const projectId = selectedGalleryId;
 
-    setLoading(true);
-    setNotice(null);
-
-    try {
-      const response = await withPhotographerHeaders(`/api/galleries/${selectedGalleryId}/publish`, {
-        method: "POST",
-      });
-      const json = await response.json();
-
-      if (!response.ok) {
-        throw new Error(json?.error?.message ?? "Galerie konnte nicht freigegeben werden");
-      }
-
-      await loadGalleries();
+    await runWithProjectWriteLock(projectId, async () => {
+      setLoading(true);
       setNotice(null);
-      setActiveStep("summary");
-    } catch (error) {
-      setNotice({ type: "error", text: toFriendlyError(error, "Die Freigabe hat nicht geklappt. Bitte versuche es in einem Moment erneut.") });
-    } finally {
-      setLoading(false);
-    }
+
+      try {
+        const response = await withProjectHeaders(projectId, `/api/galleries/${projectId}/publish`, {
+          method: "POST",
+        });
+        const json = await response.json();
+
+        if (!response.ok) {
+          throw new Error(json?.error?.code ?? json?.error?.message ?? "Galerie konnte nicht freigegeben werden");
+        }
+
+        await loadGalleries();
+        setNotice(null);
+        setActiveStep("summary");
+      } catch (error) {
+        setNotice({ type: "error", text: toFriendlyError(error, "Die Freigabe hat nicht geklappt. Bitte versuche es in einem Moment erneut.") });
+      } finally {
+        setLoading(false);
+      }
+    });
   }
 
   return (
@@ -780,7 +871,7 @@ export default function StudioPage() {
             return (
               <button
                 className={`wizard-step wizard-step-${stepState}`}
-                disabled={!isEnabled && stepState !== "active"}
+                disabled={loading || (!isEnabled && stepState !== "active")}
                 key={step.id}
                 onClick={() => setActiveStep(step.id)}
                 type="button"
@@ -820,6 +911,7 @@ export default function StudioPage() {
                   {galleries.map((gallery) => (
                     <button
                       className={`gallery-item ${selectedGalleryId === gallery.id ? "gallery-item-active" : ""}`}
+                      disabled={loading}
                       key={gallery.id}
                       onClick={() => setSelectedGalleryId(gallery.id)}
                       type="button"
@@ -834,7 +926,7 @@ export default function StudioPage() {
                   ))}
                 </div>
                 <div className="toolbar">
-                  <button className="btn btn-secondary" onClick={() => setEntryMode("new")} type="button">
+                  <button className="btn btn-secondary" disabled={loading} onClick={() => setEntryMode("new")} type="button">
                     Neues Projekt anlegen
                   </button>
                 </div>
@@ -898,7 +990,7 @@ export default function StudioPage() {
         <section className="card grid" style={{ gap: "0.75rem" }}>
           <h2 style={{ marginBottom: 0 }}>Schritt 2: Bilder hinzufügen</h2>
           <p className="helper" style={{ marginBottom: 0 }}>
-            Füge die gewünschten Bilder im aktiven Projekt hinzu. Cover und finale Galerie-Reihenfolge legst du im Freigabe-Schritt fest.
+            Füge die gewünschten Bilder im aktiven Projekt hinzu.
           </p>
 
           {!progress.hasGallery ? (
@@ -918,7 +1010,10 @@ export default function StudioPage() {
                   />
                   <div
                     className={`dropzone ${isDragOverAssets ? "dropzone-active" : ""}`}
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={() => {
+                      if (loading) return;
+                      fileInputRef.current?.click();
+                    }}
                     onDragEnter={(event) => {
                       event.preventDefault();
                       setIsDragOverAssets(true);
@@ -936,6 +1031,7 @@ export default function StudioPage() {
                     role="button"
                     tabIndex={0}
                     onKeyDown={(event) => {
+                      if (loading) return;
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         fileInputRef.current?.click();
@@ -985,7 +1081,7 @@ export default function StudioPage() {
                           </div>
                         </div>
                         <div className="selected-file-actions">
-                          <button className="btn btn-secondary" onClick={() => removeSelectedFile(index)} type="button">
+                          <button className="btn btn-secondary" disabled={loading} onClick={() => removeSelectedFile(index)} type="button">
                             Entfernen
                           </button>
                         </div>
@@ -1296,19 +1392,19 @@ export default function StudioPage() {
 
       <section className="card">
         <div className="toolbar" style={{ justifyContent: "space-between" }}>
-          <button
-            className="btn btn-secondary"
-            disabled={activeStep === "create"}
-            onClick={() => setActiveStep(previousStep(activeStep))}
-            type="button"
-          >
+            <button
+              className="btn btn-secondary"
+              disabled={loading || activeStep === "create"}
+              onClick={() => setActiveStep(previousStep(activeStep))}
+              type="button"
+            >
             Zurück
           </button>
 
           {activeStep !== "summary" ? (
             <button
               className="btn"
-              disabled={!canGoNext}
+              disabled={loading || !canGoNext}
               onClick={() => {
                 void handleNext();
               }}

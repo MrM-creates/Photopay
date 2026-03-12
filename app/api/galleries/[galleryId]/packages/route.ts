@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { readPhotographerId } from "@/lib/auth";
+import { ensureProjectContext, readPhotographerId } from "@/lib/auth";
 import { fail, ok } from "@/lib/http";
 import { createAdminClient } from "@/lib/supabase";
 
@@ -93,6 +93,9 @@ export async function POST(request: Request, context: RouteContext) {
   if ("error" in auth) return auth.error;
 
   const { galleryId } = await context.params;
+  const projectContext = ensureProjectContext(request.headers, galleryId);
+  if ("error" in projectContext) return projectContext.error;
+
   const payload = await request.json().catch(() => null);
   const parsed = packageSchema.safeParse(payload);
 
@@ -145,6 +148,7 @@ export async function POST(request: Request, context: RouteContext) {
   return ok(
     {
       id: insert.data.id,
+      projectId: insert.data.gallery_id,
       galleryId: insert.data.gallery_id,
       name: insert.data.name,
       priceCents: insert.data.price_cents,

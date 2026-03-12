@@ -21,3 +21,32 @@ export function readCartToken(headers: Headers) {
 
   return { cartToken };
 }
+
+export function readProjectId(headers: Headers) {
+  const projectId = headers.get("x-project-id");
+  if (!projectId) {
+    return {
+      error: fail("CONTEXT_MISMATCH", "Missing x-project-id header", 409),
+    };
+  }
+
+  return { projectId };
+}
+
+export function ensureProjectContext(headers: Headers, expectedProjectId: string) {
+  const context = readProjectId(headers);
+  if ("error" in context) {
+    return context;
+  }
+
+  if (context.projectId !== expectedProjectId) {
+    return {
+      error: fail("CONTEXT_MISMATCH", "Project context mismatch", 409, {
+        expectedProjectId,
+        requestProjectId: context.projectId,
+      }),
+    };
+  }
+
+  return context;
+}

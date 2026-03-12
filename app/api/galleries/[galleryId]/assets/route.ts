@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { readPhotographerId } from "@/lib/auth";
+import { ensureProjectContext, readPhotographerId } from "@/lib/auth";
 import { fail, ok } from "@/lib/http";
 import { getAssetsBucketName } from "@/lib/storage";
 import { createAdminClient } from "@/lib/supabase";
@@ -90,6 +90,9 @@ export async function PATCH(request: Request, context: RouteContext) {
   if ("error" in auth) return auth.error;
 
   const { galleryId } = await context.params;
+  const projectContext = ensureProjectContext(request.headers, galleryId);
+  if ("error" in projectContext) return projectContext.error;
+
   const payload = await request.json().catch(() => null);
   const parsed = patchSchema.safeParse(payload);
 
@@ -122,7 +125,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       return fail("DB_ERROR", update.error.message, 500);
     }
 
-    return ok({ updated: true });
+    return ok({ updated: true, projectId: galleryId });
   }
 
   const activeAssets = await owned.supabase
@@ -144,19 +147,18 @@ export async function PATCH(request: Request, context: RouteContext) {
     return fail("VALIDATION_ERROR", "orderedAssetIds contains invalid asset IDs", 422);
   }
 
-  for (let index = 0; index < parsed.data.orderedAssetIds.length; index += 1) {
-    const assetId = parsed.data.orderedAssetIds[index];
-    const update = await owned.supabase
-      .from("gallery_assets")
-      .update({ sort_order: index })
-      .eq("id", assetId)
-      .eq("gallery_id", galleryId);
+  const reorderRows = parsed.data.orderedAssetIds.map((assetId, index) => ({
+    id: assetId,
+    gallery_id: galleryId,
+    sort_order: index,
+  }));
 
-    if (update.error) {
-      return fail("DB_ERROR", update.error.message, 500);
-    }
+  const reorder = await owned.supabase.from("gallery_assets").upsert(reorderRows, {
+    onConflict: "id",
+  });
+  if (reorder.error) {
+    return fail("DB_ERROR", reorder.error.message, 500);
   }
 
-  return ok({ updated: true });
+  return ok({ updated: true, projectId: galleryId });
 }
-

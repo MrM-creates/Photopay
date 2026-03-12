@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { readPhotographerId } from "@/lib/auth";
+import { readPhotographerId, readProjectId } from "@/lib/auth";
 import { fail, ok } from "@/lib/http";
 import { createAdminClient } from "@/lib/supabase";
 
@@ -26,6 +26,8 @@ type RouteContext = {
 export async function PATCH(request: Request, context: RouteContext) {
   const auth = readPhotographerId(request.headers);
   if ("error" in auth) return auth.error;
+  const projectContext = readProjectId(request.headers);
+  if ("error" in projectContext) return projectContext.error;
 
   const { packageId } = await context.params;
   const payload = await request.json().catch(() => null);
@@ -51,6 +53,13 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   if (!existing.data) {
     return fail("PACKAGE_NOT_FOUND", "Package not found", 404);
+  }
+
+  if (projectContext.projectId !== existing.data.gallery_id) {
+    return fail("CONTEXT_MISMATCH", "Project context mismatch", 409, {
+      expectedProjectId: existing.data.gallery_id,
+      requestProjectId: projectContext.projectId,
+    });
   }
 
   const ownsGallery = await supabase
@@ -106,6 +115,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   return ok({
     id: update.data.id,
+    projectId: existing.data.gallery_id,
     name: update.data.name,
     priceCents: update.data.price_cents,
     includedCount: update.data.included_count,

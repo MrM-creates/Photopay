@@ -1,4 +1,4 @@
-import { readPhotographerId } from "@/lib/auth";
+import { ensureProjectContext, readPhotographerId } from "@/lib/auth";
 import { fail, ok } from "@/lib/http";
 import { createAdminClient } from "@/lib/supabase";
 
@@ -13,6 +13,9 @@ export async function DELETE(request: Request, context: RouteContext) {
   if ("error" in auth) return auth.error;
 
   const { galleryId, assetId } = await context.params;
+  const projectContext = ensureProjectContext(request.headers, galleryId);
+  if ("error" in projectContext) return projectContext.error;
+
   const supabase = createAdminClient();
 
   const gallery = await supabase
@@ -58,6 +61,5 @@ export async function DELETE(request: Request, context: RouteContext) {
     }
   }
 
-  return ok({ deleted: true });
+  return ok({ deleted: true, projectId: galleryId });
 }
-

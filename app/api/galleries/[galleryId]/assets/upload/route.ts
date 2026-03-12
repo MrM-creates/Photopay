@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { readPhotographerId } from "@/lib/auth";
+import { ensureProjectContext, readPhotographerId } from "@/lib/auth";
 import { fail, ok } from "@/lib/http";
 import { buildStorageKeys, ensureAssetsBucket, getAssetsBucketName } from "@/lib/storage";
 import { createAdminClient } from "@/lib/supabase";
@@ -21,6 +21,9 @@ export async function POST(request: Request, context: RouteContext) {
   if ("error" in auth) return auth.error;
 
   const { galleryId } = await context.params;
+  const projectContext = ensureProjectContext(request.headers, galleryId);
+  if ("error" in projectContext) return projectContext.error;
+
   const supabase = createAdminClient();
 
   const gallery = await supabase
@@ -88,6 +91,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   return ok(
     {
+      projectId: galleryId,
       file: {
         filename: file.name,
         mimeType: file.type || "application/octet-stream",
