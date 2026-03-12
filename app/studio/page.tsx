@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 
@@ -32,21 +31,16 @@ type StudioNotice = {
   text: string;
 };
 
-type StudioSection = {
-  id: "overview" | "galleries" | "packages" | "sharing" | "settings";
-  label: string;
-};
-
-type StepState = "offen" | "aktiv" | "erledigt";
+type WizardStepId = "create" | "assets" | "packages" | "share" | "summary";
 
 const photographerStorageKey = "photopay_photographer_id";
 
-const studioSections: StudioSection[] = [
-  { id: "overview", label: "Uebersicht" },
-  { id: "galleries", label: "Galerien" },
-  { id: "packages", label: "Pakete & Preise" },
-  { id: "sharing", label: "Kundenlinks" },
-  { id: "settings", label: "Einstellungen" },
+const wizardSteps: Array<{ id: WizardStepId; title: string; short: string }> = [
+  { id: "create", title: "Schritt 1: Galerie anlegen", short: "1. Galerie" },
+  { id: "assets", title: "Schritt 2: Bilder bereitstellen", short: "2. Bilder" },
+  { id: "packages", title: "Schritt 3: Paket festlegen", short: "3. Pakete" },
+  { id: "share", title: "Schritt 4: Kundenlink teilen", short: "4. Teilen" },
+  { id: "summary", title: "Uebersicht", short: "5. Uebersicht" },
 ];
 
 function formatChf(cents: number) {
@@ -70,8 +64,7 @@ function createClientUuid() {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
   }
 
-  const fallback = `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
-  return fallback;
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
 }
 
 function toFriendlyError(error: unknown, fallback: string) {
@@ -97,15 +90,32 @@ function toFriendlyError(error: unknown, fallback: string) {
   return fallback;
 }
 
-function statusClassForStep(state: StepState) {
-  if (state === "erledigt") return "status-published";
-  if (state === "aktiv") return "status-active";
-  return "status-open";
+function nextIncompleteStep(input: {
+  hasGallery: boolean;
+  hasAssets: boolean;
+  hasPackages: boolean;
+  isPublished: boolean;
+}): WizardStepId {
+  if (!input.hasGallery) return "create";
+  if (!input.hasAssets) return "assets";
+  if (!input.hasPackages) return "packages";
+  if (!input.isPublished) return "share";
+  return "summary";
+}
+
+function previousStep(current: WizardStepId): WizardStepId {
+  const index = wizardSteps.findIndex((step) => step.id === current);
+  return wizardSteps[Math.max(0, index - 1)].id;
+}
+
+function nextStep(current: WizardStepId): WizardStepId {
+  const index = wizardSteps.findIndex((step) => step.id === current);
+  return wizardSteps[Math.min(wizardSteps.length - 1, index + 1)].id;
 }
 
 export default function StudioPage() {
   const [photographerId, setPhotographerId] = useState("");
-  const [activeSection, setActiveSection] = useState<StudioSection["id"]>("overview");
+  const [activeStep, setActiveStep] = useState<WizardStepId>("create");
 
   const [galleries, setGalleries] = useState<Gallery[]>([]);
   const [selectedGalleryId, setSelectedGalleryId] = useState("");
@@ -137,58 +147,36 @@ export default function StudioPage() {
     return `${window.location.origin}/g/${selectedGallery.publicSlug}`;
   }, [selectedGallery]);
 
-  const workflowSteps = useMemo(() => {
+  const progress = useMemo(() => {
     const hasGallery = galleries.length > 0;
     const hasAssets = (selectedGallery?.assetCount ?? 0) > 0;
     const hasPackages = packages.length > 0;
     const isPublished = selectedGallery?.status === "published";
 
-    const doneFlags = [hasGallery, hasAssets, hasPackages, isPublished];
-
-    return [
-      {
-        key: "galleries" as const,
-        index: 1,
-        title: "Galerie anlegen",
-        detail: hasGallery ? `${galleries.length} Galerie(n) vorhanden` : "Erstelle die erste Galerie",
-        state: doneFlags[0] ? "erledigt" : "aktiv",
-      },
-      {
-        key: "packages" as const,
-        index: 2,
-        title: "Bilder bereitstellen",
-        detail: hasAssets
-          ? `${selectedGallery?.assetCount ?? 0} Bild(er) in aktiver Galerie`
-          : "Fuege Bilder in die aktive Galerie ein",
-        state: doneFlags[1] ? "erledigt" : doneFlags[0] ? "aktiv" : "offen",
-      },
-      {
-        key: "packages" as const,
-        index: 3,
-        title: "Pakete festlegen",
-        detail: hasPackages ? `${packages.length} Paket(e) bereit` : "Erstelle mindestens ein Paket",
-        state: doneFlags[2] ? "erledigt" : doneFlags[1] ? "aktiv" : "offen",
-      },
-      {
-        key: "sharing" as const,
-        index: 4,
-        title: "Kundenlink teilen",
-        detail: isPublished ? "Galerie ist freigegeben" : "Galerie veroeffentlichen und Link teilen",
-        state: doneFlags[3] ? "erledigt" : doneFlags[2] ? "aktiv" : "offen",
-      },
-    ] as Array<{
-      key: StudioSection["id"];
-      index: number;
-      title: string;
-      detail: string;
-      state: StepState;
-    }>;
+    return {
+      hasGallery,
+      hasAssets,
+      hasPackages,
+      isPublished,
+      recommendedStep: nextIncompleteStep({ hasGallery, hasAssets, hasPackages, isPublished }),
+    };
   }, [galleries.length, packages.length, selectedGallery?.assetCount, selectedGallery?.status]);
 
-  const nextStep = useMemo(
-    () => workflowSteps.find((step) => step.state !== "erledigt") ?? workflowSteps[workflowSteps.length - 1],
-    [workflowSteps],
-  );
+  const canGoNext = useMemo(() => {
+    if (activeStep === "create") return progress.hasGallery;
+    if (activeStep === "assets") return progress.hasAssets;
+    if (activeStep === "packages") return progress.hasPackages;
+    if (activeStep === "share") return progress.isPublished;
+    return false;
+  }, [activeStep, progress.hasAssets, progress.hasGallery, progress.hasPackages, progress.isPublished]);
+
+  function isStepAccessible(step: WizardStepId) {
+    if (step === "create") return true;
+    if (step === "assets") return progress.hasGallery;
+    if (step === "packages") return progress.hasAssets;
+    if (step === "share") return progress.hasPackages;
+    return progress.isPublished;
+  }
 
   useEffect(() => {
     const stored = window.localStorage.getItem(photographerStorageKey);
@@ -200,19 +188,6 @@ export default function StudioPage() {
     const generated = createClientUuid();
     window.localStorage.setItem(photographerStorageKey, generated);
     setPhotographerId(generated);
-  }, []);
-
-  useEffect(() => {
-    function syncHash() {
-      const next = window.location.hash.replace("#", "") as StudioSection["id"];
-      if (studioSections.some((section) => section.id === next)) {
-        setActiveSection(next);
-      }
-    }
-
-    syncHash();
-    window.addEventListener("hashchange", syncHash);
-    return () => window.removeEventListener("hashchange", syncHash);
   }, []);
 
   const withPhotographerHeaders = useCallback(
@@ -313,7 +288,7 @@ export default function StudioPage() {
       await loadGalleries();
       setSelectedGalleryId(json.id);
       setNotice({ type: "success", text: `Fertig. Deine Galerie ist erstellt (${json.publicSlug}).` });
-      window.location.hash = "#galleries";
+      setActiveStep("assets");
     } catch (error) {
       setNotice({ type: "error", text: toFriendlyError(error, "Die Galerie konnte leider nicht erstellt werden.") });
     } finally {
@@ -362,7 +337,7 @@ export default function StudioPage() {
 
       await loadGalleries();
       setNotice({ type: "success", text: `Fertig. ${json.uploaded} Bilder wurden hinzugefuegt.` });
-      window.location.hash = "#packages";
+      setActiveStep("packages");
     } catch (error) {
       setNotice({ type: "error", text: toFriendlyError(error, "Die Bilder konnten nicht hinzugefuegt werden.") });
     } finally {
@@ -401,7 +376,7 @@ export default function StudioPage() {
       await loadGalleries();
       await loadPackages(selectedGalleryId);
       setNotice({ type: "success", text: `Fertig. Das Paket \"${json.name}\" wurde gespeichert.` });
-      window.location.hash = "#sharing";
+      setActiveStep("share");
     } catch (error) {
       setNotice({ type: "error", text: toFriendlyError(error, "Das Paket konnte nicht gespeichert werden.") });
     } finally {
@@ -430,7 +405,7 @@ export default function StudioPage() {
 
       await loadGalleries();
       setNotice({ type: "success", text: "Fertig. Die Galerie ist jetzt fuer Kunden freigegeben." });
-      window.location.hash = "#sharing";
+      setActiveStep("summary");
     } catch (error) {
       setNotice({ type: "error", text: toFriendlyError(error, "Die Galerie konnte nicht freigegeben werden.") });
     } finally {
@@ -440,370 +415,420 @@ export default function StudioPage() {
 
   return (
     <main className="studio-shell">
-      <div className="nav">
-        <Link href="/">Start</Link>
-        <Link href="/studio">Studio</Link>
-      </div>
-
-      <section className="card grid section-anchor" id="overview" style={{ gap: "0.95rem" }}>
-        <div className="kv">
-          <div>
-            <span className="pill" style={{ marginBottom: "0.5rem" }}>
-              Fotografen-Studio
-            </span>
-            <h1 style={{ marginBottom: "0.35rem" }}>PhotoPay Studio</h1>
-            <p className="helper" style={{ marginBottom: 0 }}>
-              So einfach wie moeglich: Schritt fuer Schritt bis zum geteilten Kundenlink.
-            </p>
-          </div>
-          <span className={`status ${statusClassForStep(nextStep.state)}`}>Naechster Schritt: {nextStep.index}</span>
+      <section className="card grid" style={{ gap: "0.9rem" }}>
+        <div>
+          <span className="pill" style={{ marginBottom: "0.5rem" }}>
+            Fotografen-Studio
+          </span>
+          <h1 style={{ marginBottom: "0.35rem" }}>PhotoPay Schritt fuer Schritt</h1>
+          <p className="helper" style={{ marginBottom: 0 }}>
+            Du siehst immer nur den aktuellen Schritt. So bleibt es klar und einfach.
+          </p>
         </div>
 
-        <nav aria-label="Studio Navigation" className="studio-nav">
-          {studioSections.map((section) => (
-            <a
-              className={`studio-nav-item ${activeSection === section.id ? "studio-nav-item-active" : ""}`}
-              href={`#${section.id}`}
-              key={section.id}
-              onClick={() => setActiveSection(section.id)}
-            >
-              {section.label}
-            </a>
-          ))}
+        <nav aria-label="Schritte" className="wizard-nav">
+          {wizardSteps.map((step) => {
+            const isActive = activeStep === step.id;
+            const isEnabled = isStepAccessible(step.id);
+
+            return (
+              <button
+                className={`wizard-step ${isActive ? "wizard-step-active" : ""}`}
+                disabled={!isEnabled && !isActive}
+                key={step.id}
+                onClick={() => setActiveStep(step.id)}
+                type="button"
+              >
+                <span className="wizard-step-label">{step.short}</span>
+                {progress.recommendedStep === step.id ? <span className="wizard-step-hint">naechster</span> : null}
+              </button>
+            );
+          })}
         </nav>
-
-        <div className="step-track">
-          {workflowSteps.map((step) => (
-            <div className="step-chip" key={step.index}>
-              <div className="step-label">
-                <span className="step-index">{step.index}</span>
-                <div>
-                  <strong>{step.title}</strong>
-                  <p className="small muted" style={{ margin: "0.1rem 0 0" }}>
-                    {step.detail}
-                  </p>
-                </div>
-              </div>
-              <span className={`status ${statusClassForStep(step.state)}`}>{step.state}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="grid grid-3">
-          <div className="notice notice-muted small">Galerien: {galleries.length}</div>
-          <div className="notice notice-muted small">Pakete aktiv: {packages.length}</div>
-          <div className="notice notice-muted small">Aktive Galerie: {selectedGallery ? selectedGallery.title : "keine"}</div>
-        </div>
       </section>
 
       {notice ? <div className={`notice notice-${notice.type}`}>{notice.text}</div> : null}
 
-      <section className="grid grid-2 section-anchor" id="galleries">
-        <form className="card grid" onSubmit={handleCreateGallery} style={{ gap: "0.65rem" }}>
-          <h2 style={{ marginBottom: 0 }}>1. Galerie anlegen</h2>
-          <p className="helper">Starte mit einem klaren Galerietitel und einem Passwort fuer die Kundschaft.</p>
+      {activeStep === "create" ? (
+        <section className="card grid" style={{ gap: "0.75rem" }}>
+          <h2 style={{ marginBottom: 0 }}>Schritt 1: Galerie anlegen</h2>
+          <p className="helper" style={{ marginBottom: 0 }}>
+            Lege zuerst die Galerie fuer dein Shooting an.
+          </p>
 
-          <div>
-            <label className="label" htmlFor="gallery-title">
-              Titel
-            </label>
-            <input
-              className="input"
-              id="gallery-title"
-              onChange={(event) => setGalleryTitle(event.target.value)}
-              required
-              value={galleryTitle}
-            />
-          </div>
-
-          <div>
-            <label className="label" htmlFor="gallery-description">
-              Beschreibung (optional)
-            </label>
-            <input
-              className="input"
-              id="gallery-description"
-              onChange={(event) => setGalleryDescription(event.target.value)}
-              value={galleryDescription}
-            />
-          </div>
-
-          <div>
-            <label className="label" htmlFor="gallery-password">
-              Passwort fuer Kunden
-            </label>
-            <input
-              className="input"
-              id="gallery-password"
-              onChange={(event) => setGalleryPassword(event.target.value)}
-              required
-              value={galleryPassword}
-            />
-          </div>
-
-          <div className="toolbar">
-            <button className="btn" disabled={loading} type="submit">
-              Galerie erstellen
-            </button>
-          </div>
-        </form>
-
-        <div className="card grid" style={{ gap: "0.65rem" }}>
-          <div className="kv">
-            <h2 style={{ marginBottom: 0 }}>Deine Galerien</h2>
-            <span className="pill">{galleries.length} gesamt</span>
-          </div>
-
-          {galleries.length === 0 ? (
-            <p className="helper" style={{ marginBottom: 0 }}>
-              Noch keine Galerie vorhanden. Lege links deine erste Galerie an.
-            </p>
-          ) : (
-            <div className="gallery-list">
-              {galleries.map((gallery) => (
-                <button
-                  className={`gallery-item ${selectedGalleryId === gallery.id ? "gallery-item-active" : ""}`}
-                  key={gallery.id}
-                  onClick={() => setSelectedGalleryId(gallery.id)}
-                  type="button"
-                >
-                  <div className="kv" style={{ alignItems: "flex-start" }}>
-                    <strong>{gallery.title}</strong>
-                    <span className={`status ${gallery.status === "published" ? "status-published" : "status-draft"}`}>
-                      {gallery.status === "published" ? "live" : "entwurf"}
-                    </span>
-                  </div>
-                  <span className="small muted mono">/{gallery.publicSlug}</span>
-                  <span className="small muted">
-                    {gallery.assetCount} Bilder | {gallery.packageCount} Pakete
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="grid grid-2 section-anchor" id="packages">
-        <form className="card grid" onSubmit={handleSeedAssets} style={{ gap: "0.65rem" }}>
-          <h2 style={{ marginBottom: 0 }}>2. Bilder bereitstellen</h2>
-          <p className="helper">Aktuell im Demo-Modus: ein Dateiname pro Zeile.</p>
-
-          <div>
-            <label className="label" htmlFor="asset-seed">
-              Dateinamen
-            </label>
-            <textarea
-              className="textarea mono"
-              id="asset-seed"
-              onChange={(event) => setAssetSeedText(event.target.value)}
-              value={assetSeedText}
-            />
-          </div>
-
-          <div className="toolbar">
-            <button className="btn" disabled={loading || !selectedGalleryId} type="submit">
-              Bilder speichern
-            </button>
-          </div>
-        </form>
-
-        <form className="card grid" onSubmit={handleCreatePackage} style={{ gap: "0.65rem" }}>
-          <h2 style={{ marginBottom: 0 }}>3. Paket festlegen</h2>
-          <p className="helper">Beispiel: 10 Bilder inklusive, jedes weitere Bild als Einzelpreis.</p>
-
-          <div>
-            <label className="label" htmlFor="package-name">
-              Paketname
-            </label>
-            <input
-              className="input"
-              id="package-name"
-              onChange={(event) => setPackageName(event.target.value)}
-              required
-              value={packageName}
-            />
-          </div>
-
-          <div className="grid grid-2">
+          <form className="grid" onSubmit={handleCreateGallery} style={{ gap: "0.65rem" }}>
             <div>
-              <label className="label" htmlFor="package-price">
-                Paketpreis (Rappen)
+              <label className="label" htmlFor="gallery-title">
+                Titel
               </label>
               <input
-                className="input mono"
-                id="package-price"
-                onChange={(event) => setPackagePrice(event.target.value)}
+                className="input"
+                id="gallery-title"
+                onChange={(event) => setGalleryTitle(event.target.value)}
                 required
-                value={packagePrice}
+                value={galleryTitle}
               />
             </div>
 
             <div>
-              <label className="label" htmlFor="included-count">
-                Anzahl Bilder inklusive
+              <label className="label" htmlFor="gallery-description">
+                Beschreibung (optional)
               </label>
               <input
-                className="input mono"
-                id="included-count"
-                onChange={(event) => setIncludedCount(event.target.value)}
-                required
-                value={includedCount}
+                className="input"
+                id="gallery-description"
+                onChange={(event) => setGalleryDescription(event.target.value)}
+                value={galleryDescription}
               />
             </div>
-          </div>
 
-          <label className="asset-item" style={{ width: "fit-content" }}>
-            <input checked={allowExtra} onChange={(event) => setAllowExtra(event.target.checked)} type="checkbox" />
-            Zusaetzliche Bilder erlauben
-          </label>
-
-          {allowExtra ? (
             <div>
-              <label className="label" htmlFor="extra-price">
-                Einzelpreis pro Extra-Bild (Rappen)
+              <label className="label" htmlFor="gallery-password">
+                Passwort fuer Kunden
               </label>
               <input
-                className="input mono"
-                id="extra-price"
-                onChange={(event) => setExtraPrice(event.target.value)}
+                className="input"
+                id="gallery-password"
+                onChange={(event) => setGalleryPassword(event.target.value)}
                 required
-                value={extraPrice}
+                value={galleryPassword}
               />
+            </div>
+
+            <div className="toolbar">
+              <button className="btn" disabled={loading} type="submit">
+                Galerie erstellen
+              </button>
+            </div>
+          </form>
+
+          {galleries.length > 0 ? (
+            <div className="grid" style={{ gap: "0.55rem" }}>
+              <h3 style={{ marginBottom: 0 }}>Vorhandene Galerien</h3>
+              <div className="gallery-list">
+                {galleries.map((gallery) => (
+                  <button
+                    className={`gallery-item ${selectedGalleryId === gallery.id ? "gallery-item-active" : ""}`}
+                    key={gallery.id}
+                    onClick={() => setSelectedGalleryId(gallery.id)}
+                    type="button"
+                  >
+                    <div className="kv" style={{ alignItems: "flex-start" }}>
+                      <strong>{gallery.title}</strong>
+                      <span className={`status ${gallery.status === "published" ? "status-published" : "status-draft"}`}>
+                        {gallery.status === "published" ? "live" : "entwurf"}
+                      </span>
+                    </div>
+                    <span className="small muted mono">/{gallery.publicSlug}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           ) : null}
+        </section>
+      ) : null}
 
-          <div className="toolbar">
-            <button className="btn" disabled={loading || !selectedGalleryId} type="submit">
-              Paket speichern
-            </button>
-          </div>
-        </form>
-      </section>
+      {activeStep === "assets" ? (
+        <section className="card grid" style={{ gap: "0.75rem" }}>
+          <h2 style={{ marginBottom: 0 }}>Schritt 2: Bilder bereitstellen</h2>
+          <p className="helper" style={{ marginBottom: 0 }}>
+            Waehle eine Galerie und fuege Bilder hinzu.
+          </p>
 
-      <section className="card grid section-anchor" id="sharing" style={{ gap: "0.7rem" }}>
-        <div className="kv">
-          <div>
-            <h2 style={{ marginBottom: "0.3rem" }}>4. Kundenlink teilen</h2>
-            <p className="helper" style={{ marginBottom: 0 }}>
-              Nach dem Freigeben kann deine Kundschaft die Galerie direkt ueber den Link oeffnen.
-            </p>
-          </div>
-          <button className="btn" disabled={loading || !selectedGalleryId} onClick={handlePublishGallery} type="button">
-            Galerie freigeben
-          </button>
-        </div>
+          {!progress.hasGallery ? (
+            <div className="notice notice-error">Bitte zuerst in Schritt 1 eine Galerie anlegen.</div>
+          ) : (
+            <>
+              <div>
+                <label className="label" htmlFor="gallery-pick-assets">
+                  Galerie
+                </label>
+                <select
+                  className="select"
+                  id="gallery-pick-assets"
+                  onChange={(event) => setSelectedGalleryId(event.target.value)}
+                  value={selectedGalleryId}
+                >
+                  {galleries.map((gallery) => (
+                    <option key={gallery.id} value={gallery.id}>
+                      {gallery.title} ({gallery.assetCount} Bilder)
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-        {selectedGallery ? (
-          <>
-            <div className="notice notice-muted small">
-              Aktive Galerie: <strong>{selectedGallery.title}</strong> ({selectedGallery.publicSlug})
+              <form className="grid" onSubmit={handleSeedAssets} style={{ gap: "0.65rem" }}>
+                <div>
+                  <label className="label" htmlFor="asset-seed">
+                    Dateinamen (Demo)
+                  </label>
+                  <textarea
+                    className="textarea mono"
+                    id="asset-seed"
+                    onChange={(event) => setAssetSeedText(event.target.value)}
+                    value={assetSeedText}
+                  />
+                </div>
+
+                <div className="toolbar">
+                  <button className="btn" disabled={loading || !selectedGalleryId} type="submit">
+                    Bilder speichern
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
+        </section>
+      ) : null}
+
+      {activeStep === "packages" ? (
+        <section className="card grid" style={{ gap: "0.75rem" }}>
+          <h2 style={{ marginBottom: 0 }}>Schritt 3: Paket festlegen</h2>
+          <p className="helper" style={{ marginBottom: 0 }}>
+            Definiere Preis, Anzahl inklusive Bilder und optionalen Extra-Preis.
+          </p>
+
+          {!progress.hasAssets ? (
+            <div className="notice notice-error">Bitte zuerst in Schritt 2 Bilder bereitstellen.</div>
+          ) : (
+            <>
+              <div>
+                <label className="label" htmlFor="gallery-pick-packages">
+                  Galerie
+                </label>
+                <select
+                  className="select"
+                  id="gallery-pick-packages"
+                  onChange={(event) => setSelectedGalleryId(event.target.value)}
+                  value={selectedGalleryId}
+                >
+                  {galleries.map((gallery) => (
+                    <option key={gallery.id} value={gallery.id}>
+                      {gallery.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <form className="grid" onSubmit={handleCreatePackage} style={{ gap: "0.65rem" }}>
+                <div>
+                  <label className="label" htmlFor="package-name">
+                    Paketname
+                  </label>
+                  <input
+                    className="input"
+                    id="package-name"
+                    onChange={(event) => setPackageName(event.target.value)}
+                    required
+                    value={packageName}
+                  />
+                </div>
+
+                <div className="grid grid-2">
+                  <div>
+                    <label className="label" htmlFor="package-price">
+                      Paketpreis (Rappen)
+                    </label>
+                    <input
+                      className="input mono"
+                      id="package-price"
+                      onChange={(event) => setPackagePrice(event.target.value)}
+                      required
+                      value={packagePrice}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="label" htmlFor="included-count">
+                      Bilder inklusive
+                    </label>
+                    <input
+                      className="input mono"
+                      id="included-count"
+                      onChange={(event) => setIncludedCount(event.target.value)}
+                      required
+                      value={includedCount}
+                    />
+                  </div>
+                </div>
+
+                <label className="asset-item" style={{ width: "fit-content" }}>
+                  <input checked={allowExtra} onChange={(event) => setAllowExtra(event.target.checked)} type="checkbox" />
+                  Zusaetzliche Bilder erlauben
+                </label>
+
+                {allowExtra ? (
+                  <div>
+                    <label className="label" htmlFor="extra-price">
+                      Einzelpreis pro Extra-Bild (Rappen)
+                    </label>
+                    <input
+                      className="input mono"
+                      id="extra-price"
+                      onChange={(event) => setExtraPrice(event.target.value)}
+                      required
+                      value={extraPrice}
+                    />
+                  </div>
+                ) : null}
+
+                <div className="toolbar">
+                  <button className="btn" disabled={loading || !selectedGalleryId} type="submit">
+                    Paket speichern
+                  </button>
+                </div>
+              </form>
+
+              {packages.length > 0 ? (
+                <div className="grid grid-3">
+                  {packages.map((pkg) => (
+                    <article className="card" key={pkg.id}>
+                      <div className="kv" style={{ marginBottom: "0.45rem" }}>
+                        <strong>{pkg.name}</strong>
+                        <span className={`status ${pkg.active ? "status-published" : "status-draft"}`}>
+                          {pkg.active ? "aktiv" : "inaktiv"}
+                        </span>
+                      </div>
+                      <p className="small muted" style={{ marginBottom: "0.35rem" }}>
+                        {formatChf(pkg.priceCents)} | inkl. {pkg.includedCount} Bilder
+                      </p>
+                      <p className="small muted" style={{ marginBottom: 0 }}>
+                        {pkg.allowExtra
+                          ? `Extra: ${pkg.extraUnitPriceCents ? formatChf(pkg.extraUnitPriceCents) : "-"} / Bild`
+                          : "Extra nicht erlaubt"}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+            </>
+          )}
+        </section>
+      ) : null}
+
+      {activeStep === "share" ? (
+        <section className="card grid" style={{ gap: "0.75rem" }}>
+          <h2 style={{ marginBottom: 0 }}>Schritt 4: Kundenlink teilen</h2>
+          <p className="helper" style={{ marginBottom: 0 }}>
+            Veroeffentliche die Galerie und teile den Link.
+          </p>
+
+          {!progress.hasPackages ? (
+            <div className="notice notice-error">Bitte zuerst in Schritt 3 ein Paket festlegen.</div>
+          ) : (
+            <>
+              <div>
+                <label className="label" htmlFor="gallery-pick-share">
+                  Galerie
+                </label>
+                <select
+                  className="select"
+                  id="gallery-pick-share"
+                  onChange={(event) => setSelectedGalleryId(event.target.value)}
+                  value={selectedGalleryId}
+                >
+                  {galleries.map((gallery) => (
+                    <option key={gallery.id} value={gallery.id}>
+                      {gallery.title} ({gallery.status === "published" ? "live" : "entwurf"})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="toolbar">
+                <button className="btn" disabled={loading || !selectedGalleryId} onClick={handlePublishGallery} type="button">
+                  Galerie freigeben
+                </button>
+              </div>
+
+              {selectedGallery ? (
+                <>
+                  <div className="notice notice-muted small">
+                    Aktive Galerie: <strong>{selectedGallery.title}</strong> ({selectedGallery.publicSlug})
+                  </div>
+                  <div className="link-box">
+                    <p className="small muted" style={{ marginBottom: "0.4rem" }}>
+                      Kundenlink
+                    </p>
+                    <p className="mono small" style={{ margin: 0, wordBreak: "break-all" }}>
+                      {publicGalleryUrl || "Noch nicht verfuegbar"}
+                    </p>
+                  </div>
+                  <div className="toolbar">
+                    <a className="btn btn-secondary" href={publicGalleryUrl} rel="noreferrer" target="_blank">
+                      Kundenseite oeffnen
+                    </a>
+                  </div>
+                </>
+              ) : null}
+            </>
+          )}
+        </section>
+      ) : null}
+
+      {activeStep === "summary" ? (
+        <section className="card grid" style={{ gap: "0.75rem" }}>
+          <h2 style={{ marginBottom: 0 }}>Uebersicht</h2>
+          <p className="helper" style={{ marginBottom: 0 }}>
+            Dein Setup ist bereit. Hier siehst du den aktuellen Stand.
+          </p>
+
+          <div className="grid grid-2">
+            <div className="notice notice-muted small">Galerien: {galleries.length}</div>
+            <div className="notice notice-muted small">Pakete in aktiver Galerie: {packages.length}</div>
+            <div className={`notice ${progress.hasGallery ? "notice-success" : "notice-error"} small`}>
+              Schritt 1 Galerie: {progress.hasGallery ? "erledigt" : "offen"}
             </div>
+            <div className={`notice ${progress.hasAssets ? "notice-success" : "notice-error"} small`}>
+              Schritt 2 Bilder: {progress.hasAssets ? "erledigt" : "offen"}
+            </div>
+            <div className={`notice ${progress.hasPackages ? "notice-success" : "notice-error"} small`}>
+              Schritt 3 Pakete: {progress.hasPackages ? "erledigt" : "offen"}
+            </div>
+            <div className={`notice ${progress.isPublished ? "notice-success" : "notice-error"} small`}>
+              Schritt 4 Freigabe: {progress.isPublished ? "erledigt" : "offen"}
+            </div>
+          </div>
+
+          {selectedGallery ? (
             <div className="link-box">
               <p className="small muted" style={{ marginBottom: "0.4rem" }}>
-                Kundenlink
+                Aktiver Kundenlink
               </p>
               <p className="mono small" style={{ margin: 0, wordBreak: "break-all" }}>
                 {publicGalleryUrl || "Noch nicht verfuegbar"}
               </p>
             </div>
-            <div className="toolbar">
-              <a className="btn btn-secondary" href={publicGalleryUrl} rel="noreferrer" target="_blank">
-                Kundenseite oeffnen
-              </a>
-            </div>
-          </>
-        ) : (
-          <p className="helper" style={{ marginBottom: 0 }}>
-            Bitte waehle zuerst eine Galerie aus.
-          </p>
-        )}
+          ) : null}
+        </section>
+      ) : null}
 
-        <hr className="hr" />
+      <section className="card">
+        <div className="toolbar" style={{ justifyContent: "space-between" }}>
+          <button
+            className="btn btn-secondary"
+            disabled={activeStep === "create"}
+            onClick={() => setActiveStep(previousStep(activeStep))}
+            type="button"
+          >
+            Zurueck
+          </button>
 
-        <h3 style={{ marginBottom: 0 }}>Pakete der aktiven Galerie</h3>
-        {packages.length === 0 ? (
-          <p className="helper" style={{ marginBottom: 0 }}>
-            Noch keine Pakete vorhanden.
-          </p>
-        ) : (
-          <div className="grid grid-3">
-            {packages.map((pkg) => (
-              <article className="card" key={pkg.id}>
-                <div className="kv" style={{ marginBottom: "0.45rem" }}>
-                  <strong>{pkg.name}</strong>
-                  <span className={`status ${pkg.active ? "status-published" : "status-draft"}`}>
-                    {pkg.active ? "aktiv" : "inaktiv"}
-                  </span>
-                </div>
-                <p className="small muted" style={{ marginBottom: "0.35rem" }}>
-                  {formatChf(pkg.priceCents)} | inkl. {pkg.includedCount} Bilder
-                </p>
-                <p className="small muted" style={{ marginBottom: 0 }}>
-                  {pkg.allowExtra
-                    ? `Extra: ${pkg.extraUnitPriceCents ? formatChf(pkg.extraUnitPriceCents) : "-"} / Bild`
-                    : "Extra nicht erlaubt"}
-                </p>
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="card grid section-anchor" id="settings" style={{ gap: "0.65rem" }}>
-        <div>
-          <h2 style={{ marginBottom: "0.3rem" }}>Einstellungen</h2>
-          <p className="helper" style={{ marginBottom: 0 }}>
-            Erweitert: nur noetig, wenn du Daten manuell zuruecksetzen willst.
-          </p>
+          {activeStep !== "summary" ? (
+            <button
+              className="btn"
+              disabled={!canGoNext}
+              onClick={() => setActiveStep(nextStep(activeStep))}
+              type="button"
+            >
+              Weiter
+            </button>
+          ) : (
+            <button className="btn" onClick={() => setActiveStep(progress.recommendedStep)} type="button">
+              Zum naechsten offenen Schritt
+            </button>
+          )}
         </div>
-
-        <details>
-          <summary className="small muted" style={{ cursor: "pointer" }}>
-            Erweiterte Optionen anzeigen
-          </summary>
-          <div className="grid" style={{ marginTop: "0.7rem" }}>
-            <div>
-              <label className="label" htmlFor="photographer-id">
-                Interne Nutzer-ID
-              </label>
-              <input
-                className="input mono"
-                id="photographer-id"
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setPhotographerId(value);
-                  window.localStorage.setItem(photographerStorageKey, value);
-                }}
-                value={photographerId}
-              />
-            </div>
-            <div className="toolbar">
-              <button
-                className="btn btn-secondary"
-                onClick={() => {
-                  const next = createClientUuid();
-                  setPhotographerId(next);
-                  window.localStorage.setItem(photographerStorageKey, next);
-                }}
-                type="button"
-              >
-                Neue interne ID
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={() => {
-                  void loadGalleries().catch((error) =>
-                    setNotice({ type: "error", text: toFriendlyError(error, "Galerien konnten nicht geladen werden.") }),
-                  );
-                }}
-                type="button"
-              >
-                Daten aktualisieren
-              </button>
-            </div>
-          </div>
-        </details>
       </section>
     </main>
   );
