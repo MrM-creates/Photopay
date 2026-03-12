@@ -26,7 +26,7 @@ async function ensureGalleryOwnership(galleryId: string, photographerId: string)
   const supabase = createAdminClient();
   const gallery = await supabase
     .from("galleries")
-    .select("id")
+    .select("id,cover_asset_id")
     .eq("id", galleryId)
     .eq("photographer_id", photographerId)
     .maybeSingle();
@@ -39,7 +39,7 @@ async function ensureGalleryOwnership(galleryId: string, photographerId: string)
     return { error: fail("GALLERY_NOT_FOUND", "Gallery not found", 404) } as const;
   }
 
-  return { supabase } as const;
+  return { supabase, gallery: gallery.data } as const;
 }
 
 export async function GET(request: Request, context: RouteContext) {
@@ -61,6 +61,15 @@ export async function GET(request: Request, context: RouteContext) {
     return fail("DB_ERROR", assetsQuery.error.message, 500);
   }
 
+  const activeAssetIds = new Set(assetsQuery.data.map((asset) => asset.id));
+  const coverNeedsReset = Boolean(owned.gallery.cover_asset_id && !activeAssetIds.has(owned.gallery.cover_asset_id));
+  if (coverNeedsReset) {
+    const clearCover = await owned.supabase.from("galleries").update({ cover_asset_id: null }).eq("id", galleryId);
+    if (clearCover.error) {
+      return fail("DB_ERROR", clearCover.error.message, 500);
+    }
+  }
+
   const bucketName = getAssetsBucketName();
   const previewUrlByKey = new Map<string, string | null>();
 
@@ -72,6 +81,9 @@ export async function GET(request: Request, context: RouteContext) {
   );
 
   return ok({
+    normalized: {
+      coverReset: coverNeedsReset,
+    },
     assets: assetsQuery.data.map((asset) => ({
       id: asset.id,
       filename: asset.filename,

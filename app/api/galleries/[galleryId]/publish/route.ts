@@ -16,6 +16,31 @@ export async function POST(request: Request, context: RouteContext) {
 
   const supabase = createAdminClient();
 
+  const gallery = await supabase
+    .from("galleries")
+    .select("id,status,published_at")
+    .eq("id", galleryId)
+    .eq("photographer_id", auth.photographerId)
+    .maybeSingle();
+
+  if (gallery.error) {
+    return fail("DB_ERROR", gallery.error.message, 500);
+  }
+
+  if (!gallery.data) {
+    return fail("GALLERY_NOT_FOUND", "Gallery not found", 404);
+  }
+
+  if (gallery.data.status === "published") {
+    return ok({
+      id: gallery.data.id,
+      projectId: gallery.data.id,
+      status: gallery.data.status,
+      publishedAt: gallery.data.published_at,
+      idempotent: true,
+    });
+  }
+
   const update = await supabase
     .from("galleries")
     .update({
@@ -31,14 +56,13 @@ export async function POST(request: Request, context: RouteContext) {
     return fail("DB_ERROR", update.error.message, 500);
   }
 
-  if (!update.data) {
-    return fail("GALLERY_NOT_FOUND", "Gallery not found", 404);
-  }
+  if (!update.data) return fail("GALLERY_NOT_FOUND", "Gallery not found", 404);
 
   return ok({
     id: update.data.id,
     projectId: update.data.id,
     status: update.data.status,
     publishedAt: update.data.published_at,
+    idempotent: false,
   });
 }

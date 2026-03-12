@@ -84,8 +84,11 @@ export async function POST(request: Request, context: RouteContext) {
   });
 
   if (previewUpload.error) {
+    const cleanup = await supabase.storage.from(bucketName).remove([keys.originalKey]);
     return fail("STORAGE_ERROR", previewUpload.error.message, 500, {
       stage: "preview_upload",
+      cleanupOk: !cleanup.error,
+      cleanupError: cleanup.error?.message ?? null,
     });
   }
 
