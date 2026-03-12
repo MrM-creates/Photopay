@@ -359,6 +359,61 @@ pre,
   padding: 0.24rem 0.66rem;
 }
 
+.landing-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.landing-hero {
+  display: grid;
+  gap: 0.85rem;
+  text-align: center;
+  justify-items: center;
+  padding-top: 2.2rem;
+  padding-bottom: 2rem;
+}
+
+.landing-title {
+  margin: 0;
+  font-size: clamp(2.4rem, 1.7rem + 4vw, 5rem);
+  line-height: 1.02;
+  letter-spacing: -0.04em;
+}
+
+.landing-subtitle {
+  margin: 0;
+  font-size: clamp(1.04rem, 0.94rem + 0.5vw, 1.35rem);
+  color: var(--ink);
+}
+
+.landing-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.7rem;
+  width: min(720px, 100%);
+}
+
+.landing-actions .btn {
+  text-align: center;
+  justify-content: center;
+}
+
+.value-card h2 {
+  margin-bottom: 0.35rem;
+}
+
+.project-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.project-item {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 0.82rem;
+  background: rgba(8, 14, 23, 0.9);
+}
+
 .studio-shell {
   display: grid;
   gap: 1rem;
@@ -572,6 +627,10 @@ pre,
 
   .grid-3 {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .landing-actions {
+    grid-template-columns: 1fr 1fr;
   }
 
   .wizard-nav {

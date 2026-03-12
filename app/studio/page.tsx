@@ -36,11 +36,11 @@ type WizardStepId = "create" | "assets" | "packages" | "share" | "summary";
 const photographerStorageKey = "photopay_photographer_id";
 
 const wizardSteps: Array<{ id: WizardStepId; title: string; short: string }> = [
-  { id: "create", title: "Schritt 1: Galerie anlegen", short: "1. Galerie" },
-  { id: "assets", title: "Schritt 2: Bilder bereitstellen", short: "2. Bilder" },
-  { id: "packages", title: "Schritt 3: Paket festlegen", short: "3. Pakete" },
-  { id: "share", title: "Schritt 4: Kundenlink teilen", short: "4. Teilen" },
-  { id: "summary", title: "Uebersicht", short: "5. Uebersicht" },
+  { id: "create", title: "Schritt 1: Projekt anlegen", short: "1. Projekt" },
+  { id: "assets", title: "Schritt 2: Bilder hinzufügen", short: "2. Bilder" },
+  { id: "packages", title: "Schritt 3: Pakete festlegen", short: "3. Pakete" },
+  { id: "share", title: "Schritt 4: Kundenlink freigeben", short: "4. Freigabe" },
+  { id: "summary", title: "Übersicht", short: "5. Übersicht" },
 ];
 
 function formatChf(cents: number) {
@@ -72,19 +72,19 @@ function toFriendlyError(error: unknown, fallback: string) {
   const lower = raw.toLowerCase();
 
   if (lower.includes("failed to fetch") || lower.includes("network")) {
-    return "Ich konnte den Server gerade nicht erreichen. Bitte kurz warten und nochmal versuchen.";
+    return "Ich konnte den Server gerade nicht erreichen. Bitte versuche es in ein paar Sekunden erneut.";
   }
 
   if (raw.includes("VALIDATION_ERROR")) {
-    return "Bitte pruefe deine Eingaben. Manche Felder sind noch unvollstaendig.";
+    return "Bitte prüfe deine Eingaben. Ein Feld ist noch unvollständig.";
   }
 
   if (raw.includes("DB_ERROR")) {
-    return "Im Hintergrund ist ein technischer Fehler passiert. Bitte versuche es gleich nochmal.";
+    return "Es ist ein technischer Fehler aufgetreten. Bitte versuche es erneut.";
   }
 
   if (raw.includes("GALLERY_NOT_FOUND")) {
-    return "Diese Galerie wurde nicht gefunden. Bitte waehle eine Galerie aus der Liste.";
+    return "Dieses Projekt wurde nicht gefunden. Bitte wähle ein Projekt aus der Liste.";
   }
 
   return fallback;
@@ -116,22 +116,23 @@ function nextStep(current: WizardStepId): WizardStepId {
 export default function StudioPage() {
   const [photographerId, setPhotographerId] = useState("");
   const [activeStep, setActiveStep] = useState<WizardStepId>("create");
+  const [requestedProjectId, setRequestedProjectId] = useState<string | null>(null);
 
   const [galleries, setGalleries] = useState<Gallery[]>([]);
   const [selectedGalleryId, setSelectedGalleryId] = useState("");
   const [packages, setPackages] = useState<PackageRow[]>([]);
 
-  const [galleryTitle, setGalleryTitle] = useState("Hochzeit Muster");
-  const [galleryDescription, setGalleryDescription] = useState("Trauung + Feier");
+  const [galleryTitle, setGalleryTitle] = useState("Babyshooting Moritz 20260329");
+  const [galleryDescription, setGalleryDescription] = useState("Babyshooting im Studio");
   const [galleryPassword, setGalleryPassword] = useState("muster123");
 
   const [assetSeedText, setAssetSeedText] = useState("DSC_1001.jpg\nDSC_1002.jpg\nDSC_1003.jpg\nDSC_1004.jpg");
 
   const [packageName, setPackageName] = useState("10er Paket Digital");
-  const [packagePrice, setPackagePrice] = useState("12000");
+  const [packagePrice, setPackagePrice] = useState("120");
   const [includedCount, setIncludedCount] = useState("10");
   const [allowExtra, setAllowExtra] = useState(true);
-  const [extraPrice, setExtraPrice] = useState("1500");
+  const [extraPrice, setExtraPrice] = useState("15");
 
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<StudioNotice | null>(null);
@@ -182,12 +183,23 @@ export default function StudioPage() {
     const stored = window.localStorage.getItem(photographerStorageKey);
     if (stored) {
       setPhotographerId(stored);
-      return;
+    } else {
+      const generated = createClientUuid();
+      window.localStorage.setItem(photographerStorageKey, generated);
+      setPhotographerId(generated);
     }
 
-    const generated = createClientUuid();
-    window.localStorage.setItem(photographerStorageKey, generated);
-    setPhotographerId(generated);
+    const params = new URLSearchParams(window.location.search);
+    const stepParam = params.get("step");
+    const projectParam = params.get("project");
+
+    if (stepParam && wizardSteps.some((step) => step.id === stepParam)) {
+      setActiveStep(stepParam as WizardStepId);
+    }
+
+    if (projectParam) {
+      setRequestedProjectId(projectParam);
+    }
   }, []);
 
   const withPhotographerHeaders = useCallback(
@@ -250,7 +262,7 @@ export default function StudioPage() {
     if (!photographerId) return;
 
     void loadGalleries().catch((error) => {
-      setNotice({ type: "error", text: toFriendlyError(error, "Galerien konnten nicht geladen werden.") });
+      setNotice({ type: "error", text: toFriendlyError(error, "Projekte konnten nicht geladen werden.") });
     });
   }, [photographerId, loadGalleries]);
 
@@ -264,6 +276,22 @@ export default function StudioPage() {
       setNotice({ type: "error", text: toFriendlyError(error, "Pakete konnten nicht geladen werden.") });
     });
   }, [selectedGalleryId, photographerId, loadPackages]);
+
+  useEffect(() => {
+    if (!requestedProjectId || galleries.length === 0) return;
+
+    const found = galleries.find((gallery) => gallery.id === requestedProjectId);
+    if (found) {
+      setSelectedGalleryId(found.id);
+    } else {
+      setNotice({
+        type: "muted",
+        text: "Das gewählte Projekt wurde nicht gefunden. Bitte wähle ein Projekt aus der Liste.",
+      });
+    }
+
+    setRequestedProjectId(null);
+  }, [requestedProjectId, galleries]);
 
   async function handleCreateGallery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -287,10 +315,10 @@ export default function StudioPage() {
 
       await loadGalleries();
       setSelectedGalleryId(json.id);
-      setNotice({ type: "success", text: `Fertig. Deine Galerie ist erstellt (${json.publicSlug}).` });
+      setNotice({ type: "success", text: "Fertig. Dein Projekt ist erstellt." });
       setActiveStep("assets");
     } catch (error) {
-      setNotice({ type: "error", text: toFriendlyError(error, "Die Galerie konnte leider nicht erstellt werden.") });
+      setNotice({ type: "error", text: toFriendlyError(error, "Das Projekt konnte nicht erstellt werden. Bitte prüfe deine Eingaben.") });
     } finally {
       setLoading(false);
     }
@@ -300,7 +328,7 @@ export default function StudioPage() {
     event.preventDefault();
 
     if (!selectedGalleryId) {
-      setNotice({ type: "error", text: "Bitte zuerst eine Galerie auswaehlen." });
+      setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
       return;
     }
 
@@ -317,7 +345,7 @@ export default function StudioPage() {
       }));
 
     if (files.length === 0) {
-      setNotice({ type: "error", text: "Bitte mindestens einen Dateinamen eingeben." });
+      setNotice({ type: "error", text: "Bitte wähle mindestens ein Bild aus." });
       return;
     }
 
@@ -336,10 +364,10 @@ export default function StudioPage() {
       }
 
       await loadGalleries();
-      setNotice({ type: "success", text: `Fertig. ${json.uploaded} Bilder wurden hinzugefuegt.` });
+      setNotice({ type: "success", text: `Fertig. ${json.uploaded} Bilder wurden hinzugefügt.` });
       setActiveStep("packages");
     } catch (error) {
-      setNotice({ type: "error", text: toFriendlyError(error, "Die Bilder konnten nicht hinzugefuegt werden.") });
+      setNotice({ type: "error", text: toFriendlyError(error, "Die Bilder konnten nicht gespeichert werden. Bitte versuche es erneut.") });
     } finally {
       setLoading(false);
     }
@@ -349,7 +377,7 @@ export default function StudioPage() {
     event.preventDefault();
 
     if (!selectedGalleryId) {
-      setNotice({ type: "error", text: "Bitte zuerst eine Galerie auswaehlen." });
+      setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
       return;
     }
 
@@ -361,10 +389,10 @@ export default function StudioPage() {
         method: "POST",
         body: JSON.stringify({
           name: packageName,
-          priceCents: Number(packagePrice),
+          priceCents: Math.round(Number(packagePrice) * 100),
           includedCount: Number(includedCount),
           allowExtra,
-          extraUnitPriceCents: allowExtra ? Number(extraPrice) : null,
+          extraUnitPriceCents: allowExtra ? Math.round(Number(extraPrice) * 100) : null,
         }),
       });
       const json = await response.json();
@@ -375,10 +403,10 @@ export default function StudioPage() {
 
       await loadGalleries();
       await loadPackages(selectedGalleryId);
-      setNotice({ type: "success", text: `Fertig. Das Paket \"${json.name}\" wurde gespeichert.` });
+      setNotice({ type: "success", text: "Fertig. Das Paket wurde gespeichert." });
       setActiveStep("share");
     } catch (error) {
-      setNotice({ type: "error", text: toFriendlyError(error, "Das Paket konnte nicht gespeichert werden.") });
+      setNotice({ type: "error", text: toFriendlyError(error, "Das Paket konnte nicht gespeichert werden. Bitte prüfe die Eingaben.") });
     } finally {
       setLoading(false);
     }
@@ -386,7 +414,7 @@ export default function StudioPage() {
 
   async function handlePublishGallery() {
     if (!selectedGalleryId) {
-      setNotice({ type: "error", text: "Bitte zuerst eine Galerie auswaehlen." });
+      setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
       return;
     }
 
@@ -400,14 +428,14 @@ export default function StudioPage() {
       const json = await response.json();
 
       if (!response.ok) {
-        throw new Error(json?.error?.message ?? "Galerie konnte nicht publiziert werden");
+        throw new Error(json?.error?.message ?? "Galerie konnte nicht freigegeben werden");
       }
 
       await loadGalleries();
-      setNotice({ type: "success", text: "Fertig. Die Galerie ist jetzt fuer Kunden freigegeben." });
+      setNotice({ type: "success", text: "Fertig. Die Galerie ist jetzt live." });
       setActiveStep("summary");
     } catch (error) {
-      setNotice({ type: "error", text: toFriendlyError(error, "Die Galerie konnte nicht freigegeben werden.") });
+      setNotice({ type: "error", text: toFriendlyError(error, "Die Freigabe hat nicht geklappt. Bitte versuche es in einem Moment erneut.") });
     } finally {
       setLoading(false);
     }
@@ -417,12 +445,12 @@ export default function StudioPage() {
     <main className="studio-shell">
       <section className="card grid" style={{ gap: "0.9rem" }}>
         <div>
-          <span className="pill" style={{ marginBottom: "0.5rem" }}>
-            Fotografen-Studio
-          </span>
-          <h1 style={{ marginBottom: "0.35rem" }}>PhotoPay Schritt fuer Schritt</h1>
+          <p className="pill" style={{ marginBottom: "0.5rem" }}>
+            PhotoPay Studio
+          </p>
+          <h1 style={{ marginBottom: "0.35rem" }}>Ein Schritt, eine Entscheidung</h1>
           <p className="helper" style={{ marginBottom: 0 }}>
-            Du siehst immer nur den aktuellen Schritt. So bleibt es klar und einfach.
+            Du siehst immer nur den aktuellen Schritt. So bleibt alles klar und ruhig.
           </p>
         </div>
 
@@ -440,7 +468,7 @@ export default function StudioPage() {
                 type="button"
               >
                 <span className="wizard-step-label">{step.short}</span>
-                {progress.recommendedStep === step.id ? <span className="wizard-step-hint">naechster</span> : null}
+                {progress.recommendedStep === step.id ? <span className="wizard-step-hint">nächster</span> : null}
               </button>
             );
           })}
@@ -451,15 +479,15 @@ export default function StudioPage() {
 
       {activeStep === "create" ? (
         <section className="card grid" style={{ gap: "0.75rem" }}>
-          <h2 style={{ marginBottom: 0 }}>Schritt 1: Galerie anlegen</h2>
+          <h2 style={{ marginBottom: 0 }}>Schritt 1: Projekt anlegen</h2>
           <p className="helper" style={{ marginBottom: 0 }}>
-            Lege zuerst die Galerie fuer dein Shooting an.
+            Lege zuerst das Projekt für dein Shooting an.
           </p>
 
           <form className="grid" onSubmit={handleCreateGallery} style={{ gap: "0.65rem" }}>
             <div>
               <label className="label" htmlFor="gallery-title">
-                Titel
+                Projektname
               </label>
               <input
                 className="input"
@@ -472,7 +500,7 @@ export default function StudioPage() {
 
             <div>
               <label className="label" htmlFor="gallery-description">
-                Beschreibung (optional)
+                Kurzbeschreibung (optional)
               </label>
               <input
                 className="input"
@@ -484,7 +512,7 @@ export default function StudioPage() {
 
             <div>
               <label className="label" htmlFor="gallery-password">
-                Passwort fuer Kunden
+                Passwort für Kunden
               </label>
               <input
                 className="input"
@@ -497,14 +525,14 @@ export default function StudioPage() {
 
             <div className="toolbar">
               <button className="btn" disabled={loading} type="submit">
-                Galerie erstellen
+                Projekt speichern
               </button>
             </div>
           </form>
 
           {galleries.length > 0 ? (
             <div className="grid" style={{ gap: "0.55rem" }}>
-              <h3 style={{ marginBottom: 0 }}>Vorhandene Galerien</h3>
+              <h3 style={{ marginBottom: 0 }}>Bestehende Projekte</h3>
               <div className="gallery-list">
                 {galleries.map((gallery) => (
                   <button
@@ -530,18 +558,18 @@ export default function StudioPage() {
 
       {activeStep === "assets" ? (
         <section className="card grid" style={{ gap: "0.75rem" }}>
-          <h2 style={{ marginBottom: 0 }}>Schritt 2: Bilder bereitstellen</h2>
+          <h2 style={{ marginBottom: 0 }}>Schritt 2: Bilder hinzufügen</h2>
           <p className="helper" style={{ marginBottom: 0 }}>
-            Waehle eine Galerie und fuege Bilder hinzu.
+            Wähle das Projekt und füge die gewünschten Bilder hinzu.
           </p>
 
           {!progress.hasGallery ? (
-            <div className="notice notice-error">Bitte zuerst in Schritt 1 eine Galerie anlegen.</div>
+            <div className="notice notice-error">Bitte zuerst in Schritt 1 ein Projekt anlegen.</div>
           ) : (
             <>
               <div>
                 <label className="label" htmlFor="gallery-pick-assets">
-                  Galerie
+                  Projekt
                 </label>
                 <select
                   className="select"
@@ -560,7 +588,7 @@ export default function StudioPage() {
               <form className="grid" onSubmit={handleSeedAssets} style={{ gap: "0.65rem" }}>
                 <div>
                   <label className="label" htmlFor="asset-seed">
-                    Dateinamen (Demo)
+                    Bilder auswählen (Demo)
                   </label>
                   <textarea
                     className="textarea mono"
@@ -583,18 +611,18 @@ export default function StudioPage() {
 
       {activeStep === "packages" ? (
         <section className="card grid" style={{ gap: "0.75rem" }}>
-          <h2 style={{ marginBottom: 0 }}>Schritt 3: Paket festlegen</h2>
+          <h2 style={{ marginBottom: 0 }}>Schritt 3: Pakete festlegen</h2>
           <p className="helper" style={{ marginBottom: 0 }}>
-            Definiere Preis, Anzahl inklusive Bilder und optionalen Extra-Preis.
+            Definiere Preis, enthaltene Bilder und optional den Preis für Zusatzbilder.
           </p>
 
           {!progress.hasAssets ? (
-            <div className="notice notice-error">Bitte zuerst in Schritt 2 Bilder bereitstellen.</div>
+            <div className="notice notice-error">Bitte zuerst in Schritt 2 Bilder hinzufügen.</div>
           ) : (
             <>
               <div>
                 <label className="label" htmlFor="gallery-pick-packages">
-                  Galerie
+                  Projekt
                 </label>
                 <select
                   className="select"
@@ -627,7 +655,7 @@ export default function StudioPage() {
                 <div className="grid grid-2">
                   <div>
                     <label className="label" htmlFor="package-price">
-                      Paketpreis (Rappen)
+                      Paketpreis (CHF)
                     </label>
                     <input
                       className="input mono"
@@ -640,7 +668,7 @@ export default function StudioPage() {
 
                   <div>
                     <label className="label" htmlFor="included-count">
-                      Bilder inklusive
+                      Enthaltene Bilder
                     </label>
                     <input
                       className="input mono"
@@ -654,13 +682,13 @@ export default function StudioPage() {
 
                 <label className="asset-item" style={{ width: "fit-content" }}>
                   <input checked={allowExtra} onChange={(event) => setAllowExtra(event.target.checked)} type="checkbox" />
-                  Zusaetzliche Bilder erlauben
+                  Zusatzbilder erlauben
                 </label>
 
                 {allowExtra ? (
                   <div>
                     <label className="label" htmlFor="extra-price">
-                      Einzelpreis pro Extra-Bild (Rappen)
+                      Preis pro Zusatzbild (CHF)
                     </label>
                     <input
                       className="input mono"
@@ -679,6 +707,10 @@ export default function StudioPage() {
                 </div>
               </form>
 
+              <div className="notice notice-muted small">
+                Paketbibliothek: Vorlagenverwaltung folgt als nächster Ausbau. Aktuell arbeitest du mit Projektpaketen.
+              </div>
+
               {packages.length > 0 ? (
                 <div className="grid grid-3">
                   {packages.map((pkg) => (
@@ -694,8 +726,8 @@ export default function StudioPage() {
                       </p>
                       <p className="small muted" style={{ marginBottom: 0 }}>
                         {pkg.allowExtra
-                          ? `Extra: ${pkg.extraUnitPriceCents ? formatChf(pkg.extraUnitPriceCents) : "-"} / Bild`
-                          : "Extra nicht erlaubt"}
+                          ? `Zusatzbild: ${pkg.extraUnitPriceCents ? formatChf(pkg.extraUnitPriceCents) : "-"}`
+                          : "Keine Zusatzbilder"}
                       </p>
                     </article>
                   ))}
@@ -708,9 +740,9 @@ export default function StudioPage() {
 
       {activeStep === "share" ? (
         <section className="card grid" style={{ gap: "0.75rem" }}>
-          <h2 style={{ marginBottom: 0 }}>Schritt 4: Kundenlink teilen</h2>
+          <h2 style={{ marginBottom: 0 }}>Schritt 4: Kundenlink freigeben</h2>
           <p className="helper" style={{ marginBottom: 0 }}>
-            Veroeffentliche die Galerie und teile den Link.
+            Wenn alles passt, schaltest du das Projekt live und teilst den Link mit deinen Kunden.
           </p>
 
           {!progress.hasPackages ? (
@@ -719,7 +751,7 @@ export default function StudioPage() {
             <>
               <div>
                 <label className="label" htmlFor="gallery-pick-share">
-                  Galerie
+                  Projekt
                 </label>
                 <select
                   className="select"
@@ -737,26 +769,26 @@ export default function StudioPage() {
 
               <div className="toolbar">
                 <button className="btn" disabled={loading || !selectedGalleryId} onClick={handlePublishGallery} type="button">
-                  Galerie freigeben
+                  Jetzt freigeben
                 </button>
               </div>
 
               {selectedGallery ? (
                 <>
                   <div className="notice notice-muted small">
-                    Aktive Galerie: <strong>{selectedGallery.title}</strong> ({selectedGallery.publicSlug})
+                    Aktives Projekt: <strong>{selectedGallery.title}</strong>
                   </div>
                   <div className="link-box">
                     <p className="small muted" style={{ marginBottom: "0.4rem" }}>
-                      Kundenlink
+                      Persönlicher Kundenlink
                     </p>
                     <p className="mono small" style={{ margin: 0, wordBreak: "break-all" }}>
-                      {publicGalleryUrl || "Noch nicht verfuegbar"}
+                      {publicGalleryUrl || "Noch nicht verfügbar"}
                     </p>
                   </div>
                   <div className="toolbar">
                     <a className="btn btn-secondary" href={publicGalleryUrl} rel="noreferrer" target="_blank">
-                      Kundenseite oeffnen
+                      Kundenseite öffnen
                     </a>
                   </div>
                 </>
@@ -768,35 +800,33 @@ export default function StudioPage() {
 
       {activeStep === "summary" ? (
         <section className="card grid" style={{ gap: "0.75rem" }}>
-          <h2 style={{ marginBottom: 0 }}>Uebersicht</h2>
+          <h2 style={{ marginBottom: 0 }}>Übersicht</h2>
           <p className="helper" style={{ marginBottom: 0 }}>
-            Dein Setup ist bereit. Hier siehst du den aktuellen Stand.
+            Hier siehst du den aktuellen Status deines Projekts.
           </p>
 
           <div className="grid grid-2">
-            <div className="notice notice-muted small">Galerien: {galleries.length}</div>
-            <div className="notice notice-muted small">Pakete in aktiver Galerie: {packages.length}</div>
             <div className={`notice ${progress.hasGallery ? "notice-success" : "notice-error"} small`}>
-              Schritt 1 Galerie: {progress.hasGallery ? "erledigt" : "offen"}
+              Projekt: {progress.hasGallery ? "erledigt" : "offen"}
             </div>
             <div className={`notice ${progress.hasAssets ? "notice-success" : "notice-error"} small`}>
-              Schritt 2 Bilder: {progress.hasAssets ? "erledigt" : "offen"}
+              Bilder: {progress.hasAssets ? "erledigt" : "offen"}
             </div>
             <div className={`notice ${progress.hasPackages ? "notice-success" : "notice-error"} small`}>
-              Schritt 3 Pakete: {progress.hasPackages ? "erledigt" : "offen"}
+              Pakete: {progress.hasPackages ? "erledigt" : "offen"}
             </div>
             <div className={`notice ${progress.isPublished ? "notice-success" : "notice-error"} small`}>
-              Schritt 4 Freigabe: {progress.isPublished ? "erledigt" : "offen"}
+              Freigabe: {progress.isPublished ? "erledigt" : "offen"}
             </div>
           </div>
 
           {selectedGallery ? (
             <div className="link-box">
               <p className="small muted" style={{ marginBottom: "0.4rem" }}>
-                Aktiver Kundenlink
+                Persönlicher Kundenlink
               </p>
               <p className="mono small" style={{ margin: 0, wordBreak: "break-all" }}>
-                {publicGalleryUrl || "Noch nicht verfuegbar"}
+                {publicGalleryUrl || "Noch nicht verfügbar"}
               </p>
             </div>
           ) : null}
@@ -811,7 +841,7 @@ export default function StudioPage() {
             onClick={() => setActiveStep(previousStep(activeStep))}
             type="button"
           >
-            Zurueck
+            Zurück
           </button>
 
           {activeStep !== "summary" ? (
@@ -825,7 +855,7 @@ export default function StudioPage() {
             </button>
           ) : (
             <button className="btn" onClick={() => setActiveStep(progress.recommendedStep)} type="button">
-              Zum naechsten offenen Schritt
+              Zum nächsten offenen Schritt
             </button>
           )}
         </div>
