@@ -79,7 +79,7 @@ export default function PwaClient() {
   }
 
   return (
-    <aside className="install-banner" role="dialog" aria-label="Install prompt">
+    <aside className="install-banner" role="dialog" aria-label="App installieren">
       <p className="small" style={{ margin: 0 }}>
         PhotoPay als App installieren
       </p>
@@ -88,7 +88,7 @@ export default function PwaClient() {
           Installieren
         </button>
         <button className="btn btn-secondary" type="button" onClick={() => setDismissed(true)}>
-          Spaeter
+          Später
         </button>
       </div>
     </aside>

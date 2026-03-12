@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent, DragEvent, FormEvent } from "react";
 
 type Gallery = {
   id: string;
@@ -32,15 +33,16 @@ type StudioNotice = {
 };
 
 type WizardStepId = "create" | "assets" | "packages" | "share" | "summary";
+type EntryMode = "new" | "open";
 
 const photographerStorageKey = "photopay_photographer_id";
 
 const wizardSteps: Array<{ id: WizardStepId; title: string; short: string }> = [
-  { id: "create", title: "Schritt 1: Projekt anlegen", short: "1. Projekt" },
-  { id: "assets", title: "Schritt 2: Bilder hinzufügen", short: "2. Bilder" },
-  { id: "packages", title: "Schritt 3: Pakete festlegen", short: "3. Pakete" },
-  { id: "share", title: "Schritt 4: Kundenlink freigeben", short: "4. Freigabe" },
-  { id: "summary", title: "Übersicht", short: "5. Übersicht" },
+  { id: "create", title: "Schritt 1: Projekt anlegen", short: "Projekt" },
+  { id: "assets", title: "Schritt 2: Bilder hinzufügen", short: "Bilder" },
+  { id: "packages", title: "Schritt 3: Pakete festlegen", short: "Pakete" },
+  { id: "share", title: "Schritt 4: Kundenlink freigeben", short: "Freigabe" },
+  { id: "summary", title: "Übersicht", short: "Übersicht" },
 ];
 
 function formatChf(cents: number) {
@@ -116,6 +118,7 @@ function nextStep(current: WizardStepId): WizardStepId {
 export default function StudioPage() {
   const [photographerId, setPhotographerId] = useState("");
   const [activeStep, setActiveStep] = useState<WizardStepId>("create");
+  const [entryMode, setEntryMode] = useState<EntryMode>("new");
   const [requestedProjectId, setRequestedProjectId] = useState<string | null>(null);
 
   const [galleries, setGalleries] = useState<Gallery[]>([]);
@@ -126,7 +129,8 @@ export default function StudioPage() {
   const [galleryDescription, setGalleryDescription] = useState("Babyshooting im Studio");
   const [galleryPassword, setGalleryPassword] = useState("muster123");
 
-  const [assetSeedText, setAssetSeedText] = useState("DSC_1001.jpg\nDSC_1002.jpg\nDSC_1003.jpg\nDSC_1004.jpg");
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [isDragOverAssets, setIsDragOverAssets] = useState(false);
 
   const [packageName, setPackageName] = useState("10er Paket Digital");
   const [packagePrice, setPackagePrice] = useState("120");
@@ -136,11 +140,14 @@ export default function StudioPage() {
 
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState<StudioNotice | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedGallery = useMemo(
     () => galleries.find((gallery) => gallery.id === selectedGalleryId) ?? null,
     [galleries, selectedGalleryId],
   );
+
+  const currentProjectLabel = selectedGallery?.title ?? (galleries.length > 0 ? "Projekt auswählen" : "Kein Projekt geöffnet");
 
   const publicGalleryUrl = useMemo(() => {
     if (!selectedGallery) return "";
@@ -165,11 +172,11 @@ export default function StudioPage() {
 
   const canGoNext = useMemo(() => {
     if (activeStep === "create") return progress.hasGallery;
-    if (activeStep === "assets") return progress.hasAssets;
+    if (activeStep === "assets") return progress.hasAssets || selectedFiles.length > 0;
     if (activeStep === "packages") return progress.hasPackages;
     if (activeStep === "share") return progress.isPublished;
     return false;
-  }, [activeStep, progress.hasAssets, progress.hasGallery, progress.hasPackages, progress.isPublished]);
+  }, [activeStep, progress.hasAssets, progress.hasGallery, progress.hasPackages, progress.isPublished, selectedFiles.length]);
 
   function isStepAccessible(step: WizardStepId) {
     if (step === "create") return true;
@@ -178,6 +185,75 @@ export default function StudioPage() {
     if (step === "share") return progress.hasPackages;
     return progress.isPublished;
   }
+
+  function getStepState(step: WizardStepId): "open" | "active" | "done" {
+    if (activeStep === step) return "active";
+    if (step === "create" && progress.hasGallery) return "done";
+    if (step === "assets" && progress.hasAssets) return "done";
+    if (step === "packages" && progress.hasPackages) return "done";
+    if (step === "share" && progress.isPublished) return "done";
+    if (step === "summary" && progress.isPublished) return "done";
+    return "open";
+  }
+
+  function appendFiles(filesToAppend: File[]) {
+    setSelectedFiles((previous) => {
+      const existing = new Set(previous.map((file) => `${file.name}__${file.size}__${file.lastModified}`));
+      const next = [...previous];
+
+      for (const file of filesToAppend) {
+        const key = `${file.name}__${file.size}__${file.lastModified}`;
+        if (existing.has(key)) continue;
+        existing.add(key);
+        next.push(file);
+      }
+
+      return next;
+    });
+  }
+
+  function handleAssetFileInput(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) return;
+    appendFiles(files);
+    event.target.value = "";
+  }
+
+  function handleAssetsDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setIsDragOverAssets(false);
+    const files = Array.from(event.dataTransfer.files ?? []);
+    if (files.length === 0) return;
+    appendFiles(files);
+  }
+
+  function removeSelectedFile(index: number) {
+    setSelectedFiles((previous) => previous.filter((_, currentIndex) => currentIndex !== index));
+  }
+
+  function formatFileSize(sizeInBytes: number) {
+    if (sizeInBytes < 1024) return `${sizeInBytes} B`;
+    if (sizeInBytes < 1024 * 1024) return `${Math.round(sizeInBytes / 1024)} KB`;
+    return `${(sizeInBytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  const selectedFilePreviews = useMemo(
+    () =>
+      selectedFiles.map((file, index) => ({
+        file,
+        previewUrl: URL.createObjectURL(file),
+        key: `${file.name}-${file.lastModified}-${index}`,
+      })),
+    [selectedFiles],
+  );
+
+  useEffect(() => {
+    return () => {
+      for (const preview of selectedFilePreviews) {
+        URL.revokeObjectURL(preview.previewUrl);
+      }
+    };
+  }, [selectedFilePreviews]);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(photographerStorageKey);
@@ -192,6 +268,13 @@ export default function StudioPage() {
     const params = new URLSearchParams(window.location.search);
     const stepParam = params.get("step");
     const projectParam = params.get("project");
+    const modeParam = params.get("mode");
+
+    if (modeParam === "open") {
+      setEntryMode("open");
+    } else {
+      setEntryMode("new");
+    }
 
     if (stepParam && wizardSteps.some((step) => step.id === stepParam)) {
       setActiveStep(stepParam as WizardStepId);
@@ -315,7 +398,7 @@ export default function StudioPage() {
 
       await loadGalleries();
       setSelectedGalleryId(json.id);
-      setNotice({ type: "success", text: "Fertig. Dein Projekt ist erstellt." });
+      setNotice(null);
       setActiveStep("assets");
     } catch (error) {
       setNotice({ type: "error", text: toFriendlyError(error, "Das Projekt konnte nicht erstellt werden. Bitte prüfe deine Eingaben.") });
@@ -324,29 +407,23 @@ export default function StudioPage() {
     }
   }
 
-  async function handleSeedAssets(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
+  async function persistSelectedFiles() {
     if (!selectedGalleryId) {
       setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
-      return;
+      return false;
     }
 
-    const files = assetSeedText
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((filename) => ({
-        filename,
-        mimeType: "image/jpeg",
-        fileSizeBytes: 1_500_000,
-        width: 2400,
-        height: 1600,
-      }));
+    const files = selectedFiles.map((file) => ({
+      filename: file.name,
+      mimeType: file.type || "application/octet-stream",
+      fileSizeBytes: file.size,
+      width: 2400,
+      height: 1600,
+    }));
 
     if (files.length === 0) {
       setNotice({ type: "error", text: "Bitte wähle mindestens ein Bild aus." });
-      return;
+      return false;
     }
 
     setLoading(true);
@@ -364,13 +441,40 @@ export default function StudioPage() {
       }
 
       await loadGalleries();
-      setNotice({ type: "success", text: `Fertig. ${json.uploaded} Bilder wurden hinzugefügt.` });
-      setActiveStep("packages");
+      setSelectedFiles([]);
+      setNotice(null);
+      return true;
     } catch (error) {
       setNotice({ type: "error", text: toFriendlyError(error, "Die Bilder konnten nicht gespeichert werden. Bitte versuche es erneut.") });
+      return false;
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleSeedAssets(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const saved = await persistSelectedFiles();
+    if (saved) {
+      setActiveStep("packages");
+    }
+  }
+
+  async function handleNext() {
+    if (activeStep === "assets" && selectedFiles.length > 0) {
+      const saved = await persistSelectedFiles();
+      if (saved) {
+        setActiveStep("packages");
+      }
+      return;
+    }
+
+    if (activeStep === "assets" && !progress.hasAssets) {
+      setNotice({ type: "error", text: "Bitte wähle mindestens ein Bild aus oder füge zuerst Bilder hinzu." });
+      return;
+    }
+
+    setActiveStep(nextStep(activeStep));
   }
 
   async function handleCreatePackage(event: FormEvent<HTMLFormElement>) {
@@ -403,7 +507,7 @@ export default function StudioPage() {
 
       await loadGalleries();
       await loadPackages(selectedGalleryId);
-      setNotice({ type: "success", text: "Fertig. Das Paket wurde gespeichert." });
+      setNotice(null);
       setActiveStep("share");
     } catch (error) {
       setNotice({ type: "error", text: toFriendlyError(error, "Das Paket konnte nicht gespeichert werden. Bitte prüfe die Eingaben.") });
@@ -432,7 +536,7 @@ export default function StudioPage() {
       }
 
       await loadGalleries();
-      setNotice({ type: "success", text: "Fertig. Die Galerie ist jetzt live." });
+      setNotice(null);
       setActiveStep("summary");
     } catch (error) {
       setNotice({ type: "error", text: toFriendlyError(error, "Die Freigabe hat nicht geklappt. Bitte versuche es in einem Moment erneut.") });
@@ -443,116 +547,135 @@ export default function StudioPage() {
 
   return (
     <main className="studio-shell">
-      <section className="card grid" style={{ gap: "0.9rem" }}>
-        <div>
-          <p className="pill" style={{ marginBottom: "0.5rem" }}>
+      <header className="studio-top">
+        <div className="studio-top-brand">
+          <Link className="studio-brand-link" href="/">
             PhotoPay Studio
-          </p>
-          <h1 style={{ marginBottom: "0.35rem" }}>Ein Schritt, eine Entscheidung</h1>
-          <p className="helper" style={{ marginBottom: 0 }}>
-            Du siehst immer nur den aktuellen Schritt. So bleibt alles klar und ruhig.
+          </Link>
+          <p className="studio-top-project">
+            Projekt: <strong>{currentProjectLabel}</strong>
           </p>
         </div>
-
         <nav aria-label="Schritte" className="wizard-nav">
           {wizardSteps.map((step) => {
-            const isActive = activeStep === step.id;
             const isEnabled = isStepAccessible(step.id);
+            const stepState = getStepState(step.id);
+            const stateLabel = stepState === "done" ? "erledigt" : stepState === "active" ? "aktiv" : "offen";
 
             return (
               <button
-                className={`wizard-step ${isActive ? "wizard-step-active" : ""}`}
-                disabled={!isEnabled && !isActive}
+                className={`wizard-step wizard-step-${stepState}`}
+                disabled={!isEnabled && stepState !== "active"}
                 key={step.id}
                 onClick={() => setActiveStep(step.id)}
                 type="button"
               >
                 <span className="wizard-step-label">{step.short}</span>
-                {progress.recommendedStep === step.id ? <span className="wizard-step-hint">nächster</span> : null}
+                {stepState === "done" ? (
+                  <span
+                    aria-label={stateLabel}
+                    className={`wizard-step-icon wizard-step-icon-${stepState}`}
+                    title={stateLabel}
+                  >
+                    ✓
+                  </span>
+                ) : null}
               </button>
             );
           })}
         </nav>
-      </section>
+      </header>
 
       {notice ? <div className={`notice notice-${notice.type}`}>{notice.text}</div> : null}
 
       {activeStep === "create" ? (
         <section className="card grid" style={{ gap: "0.75rem" }}>
-          <h2 style={{ marginBottom: 0 }}>Schritt 1: Projekt anlegen</h2>
+          <h2 style={{ marginBottom: 0 }}>{entryMode === "open" ? "Schritt 1: Projekt öffnen" : "Schritt 1: Projekt anlegen"}</h2>
           <p className="helper" style={{ marginBottom: 0 }}>
-            Lege zuerst das Projekt für dein Shooting an.
+            {entryMode === "open"
+              ? "Wähle ein bestehendes Projekt aus und fahre direkt mit den nächsten Schritten fort."
+              : "Lege zuerst das Projekt für dein Shooting an."}
           </p>
 
-          <form className="grid" onSubmit={handleCreateGallery} style={{ gap: "0.65rem" }}>
-            <div>
-              <label className="label" htmlFor="gallery-title">
-                Projektname
-              </label>
-              <input
-                className="input"
-                id="gallery-title"
-                onChange={(event) => setGalleryTitle(event.target.value)}
-                required
-                value={galleryTitle}
-              />
-            </div>
-
-            <div>
-              <label className="label" htmlFor="gallery-description">
-                Kurzbeschreibung (optional)
-              </label>
-              <input
-                className="input"
-                id="gallery-description"
-                onChange={(event) => setGalleryDescription(event.target.value)}
-                value={galleryDescription}
-              />
-            </div>
-
-            <div>
-              <label className="label" htmlFor="gallery-password">
-                Passwort für Kunden
-              </label>
-              <input
-                className="input"
-                id="gallery-password"
-                onChange={(event) => setGalleryPassword(event.target.value)}
-                required
-                value={galleryPassword}
-              />
-            </div>
-
-            <div className="toolbar">
-              <button className="btn" disabled={loading} type="submit">
-                Projekt speichern
-              </button>
-            </div>
-          </form>
-
-          {galleries.length > 0 ? (
-            <div className="grid" style={{ gap: "0.55rem" }}>
-              <h3 style={{ marginBottom: 0 }}>Bestehende Projekte</h3>
-              <div className="gallery-list">
-                {galleries.map((gallery) => (
-                  <button
-                    className={`gallery-item ${selectedGalleryId === gallery.id ? "gallery-item-active" : ""}`}
-                    key={gallery.id}
-                    onClick={() => setSelectedGalleryId(gallery.id)}
-                    type="button"
-                  >
-                    <div className="kv" style={{ alignItems: "flex-start" }}>
-                      <strong>{gallery.title}</strong>
-                      <span className={`status ${gallery.status === "published" ? "status-published" : "status-draft"}`}>
-                        {gallery.status === "published" ? "live" : "entwurf"}
-                      </span>
-                    </div>
-                    <span className="small muted mono">/{gallery.publicSlug}</span>
+          {entryMode === "open" ? (
+            galleries.length > 0 ? (
+              <div className="grid" style={{ gap: "0.55rem" }}>
+                <h3 style={{ marginBottom: 0 }}>Bestehende Projekte</h3>
+                <div className="gallery-list">
+                  {galleries.map((gallery) => (
+                    <button
+                      className={`gallery-item ${selectedGalleryId === gallery.id ? "gallery-item-active" : ""}`}
+                      key={gallery.id}
+                      onClick={() => setSelectedGalleryId(gallery.id)}
+                      type="button"
+                    >
+                      <div className="kv" style={{ alignItems: "flex-start" }}>
+                        <strong>{gallery.title}</strong>
+                        <span className={`status ${gallery.status === "published" ? "status-published" : "status-draft"}`}>
+                          {gallery.status === "published" ? "live" : "entwurf"}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div className="toolbar">
+                  <button className="btn btn-secondary" onClick={() => setEntryMode("new")} type="button">
+                    Neues Projekt anlegen
                   </button>
-                ))}
+                </div>
               </div>
-            </div>
-          ) : null}
+            ) : (
+              <div className="notice notice-muted">Es sind noch keine Projekte vorhanden. Lege zuerst ein Projekt an.</div>
+            )
+          ) : (
+            <>
+              <form className="grid" onSubmit={handleCreateGallery} style={{ gap: "0.65rem" }}>
+                <div>
+                  <label className="label" htmlFor="gallery-title">
+                    Projektname
+                  </label>
+                  <input
+                    className="input"
+                    id="gallery-title"
+                    onChange={(event) => setGalleryTitle(event.target.value)}
+                    required
+                    value={galleryTitle}
+                  />
+                </div>
+
+                <div>
+                  <label className="label" htmlFor="gallery-description">
+                    Kurzbeschreibung (optional)
+                  </label>
+                  <input
+                    className="input"
+                    id="gallery-description"
+                    onChange={(event) => setGalleryDescription(event.target.value)}
+                    value={galleryDescription}
+                  />
+                </div>
+
+                <div>
+                  <label className="label" htmlFor="gallery-password">
+                    Passwort für Kunden
+                  </label>
+                  <input
+                    className="input"
+                    id="gallery-password"
+                    onChange={(event) => setGalleryPassword(event.target.value)}
+                    required
+                    value={galleryPassword}
+                  />
+                </div>
+
+                <div className="toolbar">
+                  <button className="btn" disabled={loading} type="submit">
+                    Weiter
+                  </button>
+                </div>
+              </form>
+            </>
+          )}
         </section>
       ) : null}
 
@@ -560,49 +683,93 @@ export default function StudioPage() {
         <section className="card grid" style={{ gap: "0.75rem" }}>
           <h2 style={{ marginBottom: 0 }}>Schritt 2: Bilder hinzufügen</h2>
           <p className="helper" style={{ marginBottom: 0 }}>
-            Wähle das Projekt und füge die gewünschten Bilder hinzu.
+            Füge die gewünschten Bilder im aktiven Projekt hinzu.
           </p>
 
           {!progress.hasGallery ? (
             <div className="notice notice-error">Bitte zuerst in Schritt 1 ein Projekt anlegen.</div>
           ) : (
             <>
-              <div>
-                <label className="label" htmlFor="gallery-pick-assets">
-                  Projekt
-                </label>
-                <select
-                  className="select"
-                  id="gallery-pick-assets"
-                  onChange={(event) => setSelectedGalleryId(event.target.value)}
-                  value={selectedGalleryId}
-                >
-                  {galleries.map((gallery) => (
-                    <option key={gallery.id} value={gallery.id}>
-                      {gallery.title} ({gallery.assetCount} Bilder)
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <div className="notice notice-muted small">Aktives Projekt: {currentProjectLabel}</div>
 
               <form className="grid" onSubmit={handleSeedAssets} style={{ gap: "0.65rem" }}>
                 <div>
-                  <label className="label" htmlFor="asset-seed">
-                    Bilder auswählen (Demo)
+                  <label className="label" htmlFor="asset-input">
+                    Bilder auswählen
                   </label>
-                  <textarea
-                    className="textarea mono"
-                    id="asset-seed"
-                    onChange={(event) => setAssetSeedText(event.target.value)}
-                    value={assetSeedText}
+                  <input
+                    accept="image/*"
+                    id="asset-input"
+                    multiple
+                    onChange={handleAssetFileInput}
+                    ref={fileInputRef}
+                    style={{ display: "none" }}
+                    type="file"
                   />
+                  <div
+                    className={`dropzone ${isDragOverAssets ? "dropzone-active" : ""}`}
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragEnter={(event) => {
+                      event.preventDefault();
+                      setIsDragOverAssets(true);
+                    }}
+                    onDragLeave={(event) => {
+                      event.preventDefault();
+                      if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                      setIsDragOverAssets(false);
+                    }}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setIsDragOverAssets(true);
+                    }}
+                    onDrop={handleAssetsDrop}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        fileInputRef.current?.click();
+                      }
+                    }}
+                  >
+                    <p className="dropzone-title">Dateien hierhin ziehen oder klicken</p>
+                    <p className="small muted" style={{ marginBottom: 0 }}>
+                      JPG, PNG, HEIC und weitere Bildformate
+                    </p>
+                  </div>
                 </div>
 
-                <div className="toolbar">
-                  <button className="btn" disabled={loading || !selectedGalleryId} type="submit">
-                    Bilder speichern
-                  </button>
-                </div>
+                {selectedFiles.length > 0 ? (
+                  <div className="selected-files">
+                    {selectedFilePreviews.map((preview, index) => (
+                      <div className="selected-file-row" key={preview.key}>
+                        <div className="selected-file-preview-wrap">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            alt={preview.file.name}
+                            className="selected-file-preview"
+                            src={preview.previewUrl}
+                          />
+                        </div>
+                        <div className="selected-file-main">
+                          <div className="selected-file-meta">
+                            <span className="small selected-file-name">{preview.file.name}</span>
+                            <span className="small muted">{formatFileSize(preview.file.size)}</span>
+                          </div>
+                        </div>
+                        <div className="selected-file-actions">
+                          <button className="btn btn-secondary" onClick={() => removeSelectedFile(index)} type="button">
+                            Entfernen
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="small muted" style={{ marginBottom: 0 }}>
+                    Noch keine Bilder ausgewählt.
+                  </p>
+                )}
               </form>
             </>
           )}
@@ -620,23 +787,7 @@ export default function StudioPage() {
             <div className="notice notice-error">Bitte zuerst in Schritt 2 Bilder hinzufügen.</div>
           ) : (
             <>
-              <div>
-                <label className="label" htmlFor="gallery-pick-packages">
-                  Projekt
-                </label>
-                <select
-                  className="select"
-                  id="gallery-pick-packages"
-                  onChange={(event) => setSelectedGalleryId(event.target.value)}
-                  value={selectedGalleryId}
-                >
-                  {galleries.map((gallery) => (
-                    <option key={gallery.id} value={gallery.id}>
-                      {gallery.title}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <div className="notice notice-muted small">Aktives Projekt: {currentProjectLabel}</div>
 
               <form className="grid" onSubmit={handleCreatePackage} style={{ gap: "0.65rem" }}>
                 <div>
@@ -708,7 +859,7 @@ export default function StudioPage() {
               </form>
 
               <div className="notice notice-muted small">
-                Paketbibliothek: Vorlagenverwaltung folgt als nächster Ausbau. Aktuell arbeitest du mit Projektpaketen.
+                Hier verwaltest du aktuell Projektpakete.
               </div>
 
               {packages.length > 0 ? (
@@ -742,30 +893,14 @@ export default function StudioPage() {
         <section className="card grid" style={{ gap: "0.75rem" }}>
           <h2 style={{ marginBottom: 0 }}>Schritt 4: Kundenlink freigeben</h2>
           <p className="helper" style={{ marginBottom: 0 }}>
-            Wenn alles passt, schaltest du das Projekt live und teilst den Link mit deinen Kunden.
+            Wenn alles passt, schaltest du das aktive Projekt live und teilst den Link mit deinen Kunden.
           </p>
 
           {!progress.hasPackages ? (
             <div className="notice notice-error">Bitte zuerst in Schritt 3 ein Paket festlegen.</div>
           ) : (
             <>
-              <div>
-                <label className="label" htmlFor="gallery-pick-share">
-                  Projekt
-                </label>
-                <select
-                  className="select"
-                  id="gallery-pick-share"
-                  onChange={(event) => setSelectedGalleryId(event.target.value)}
-                  value={selectedGalleryId}
-                >
-                  {galleries.map((gallery) => (
-                    <option key={gallery.id} value={gallery.id}>
-                      {gallery.title} ({gallery.status === "published" ? "live" : "entwurf"})
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <div className="notice notice-muted small">Aktives Projekt: {currentProjectLabel}</div>
 
               <div className="toolbar">
                 <button className="btn" disabled={loading || !selectedGalleryId} onClick={handlePublishGallery} type="button">
@@ -848,7 +983,9 @@ export default function StudioPage() {
             <button
               className="btn"
               disabled={!canGoNext}
-              onClick={() => setActiveStep(nextStep(activeStep))}
+              onClick={() => {
+                void handleNext();
+              }}
               type="button"
             >
               Weiter

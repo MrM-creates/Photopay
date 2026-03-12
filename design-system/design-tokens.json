@@ -1,0 +1,248 @@
+{
+  "$schema": "https://example.com/flider/design-tokens.schema.json",
+  "meta": {
+    "name": "Flider Design Tokens",
+    "version": "1.0.0-rc2.1",
+    "description": "Core UI tokens and curated 4x4 vibe matrix extracted from Flider."
+  },
+  "core": {
+    "color": {
+      "bg": "#050505",
+      "surface": "#121212",
+      "surfaceLight": "#1e1e1e",
+      "textPrimary": "#ffffff",
+      "textSecondary": "#a0a0a0",
+      "accent": "#ffffff",
+      "accentHover": "#e0e0e0",
+      "border": "rgba(255, 255, 255, 0.1)",
+      "borderHover": "rgba(255, 255, 255, 0.2)"
+    },
+    "font": {
+      "sans": "'Space Mono', monospace",
+      "serif": "'Playfair Display', serif",
+      "mono": "'Space Mono', monospace"
+    },
+    "radius": {
+      "sm": "8px",
+      "md": "12px",
+      "lg": "16px",
+      "pill": "50px"
+    },
+    "motion": {
+      "fast": "0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+      "smooth": "0.4s cubic-bezier(0.25, 1, 0.5, 1)"
+    },
+    "shadow": {
+      "buttonHover": "0 10px 20px rgba(255, 255, 255, 0.1)",
+      "cardHover": "0 10px 20px rgba(0, 0, 0, 0.2)"
+    },
+    "spacing": {
+      "xs": "0.5rem",
+      "sm": "0.75rem",
+      "md": "1rem",
+      "lg": "1.5rem",
+      "xl": "2.5rem"
+    }
+  },
+  "typography": {
+    "h1": {
+      "fontSize": "clamp(2.5rem, 5vw, 4rem)",
+      "lineHeight": "1.1",
+      "letterSpacing": "-0.02em",
+      "fontFamily": "var(--fs-font-serif)",
+      "fontWeight": 400
+    },
+    "h2": {
+      "fontSize": "clamp(2rem, 4vw, 3rem)",
+      "lineHeight": "1.2",
+      "letterSpacing": "-0.02em",
+      "fontFamily": "var(--fs-font-serif)",
+      "fontWeight": 400
+    },
+    "body": {
+      "fontSize": "1.1rem",
+      "lineHeight": "1.5",
+      "fontFamily": "var(--fs-font-sans)"
+    }
+  },
+  "styles": {
+    "brachial": {
+      "name": "Brachial",
+      "description": "Laut, kontrastreich, industriell",
+      "themeClass": "theme-brachial",
+      "previewClass": "preview-brachial"
+    },
+    "minimalist": {
+      "name": "Minimalist",
+      "description": "Ruhig, elegant, inhaltsfokussiert",
+      "themeClass": "theme-minimalist",
+      "previewClass": "preview-minimalist"
+    },
+    "modern": {
+      "name": "Modern",
+      "description": "Clean, tech-affin, vertrauenswuerdig",
+      "themeClass": "theme-modern",
+      "previewClass": "preview-modern"
+    },
+    "classic": {
+      "name": "Classic",
+      "description": "Zeitlos, wertig, erzaehlend",
+      "themeClass": "theme-classic",
+      "previewClass": "preview-classic"
+    }
+  },
+  "vibes": {
+    "brachial": [
+      {
+        "id": "B-01",
+        "label": "Lass es knallen?",
+        "headingFont": "\"Inter Tight\", sans-serif",
+        "bodyFont": "\"Inter\", sans-serif",
+        "bg": "#1A1A1A",
+        "text": "#FFFFFF",
+        "accent": "#EEFF00"
+      },
+      {
+        "id": "B-02",
+        "label": "Etwas technischer?",
+        "headingFont": "\"Inter Tight\", sans-serif",
+        "bodyFont": "\"Inter\", sans-serif",
+        "bg": "#0D0D0D",
+        "text": "#FFFFFF",
+        "accent": "#00FFFF"
+      },
+      {
+        "id": "B-03",
+        "label": "Radikal reduziert?",
+        "headingFont": "\"Inter Tight\", sans-serif",
+        "bodyFont": "\"Inter\", sans-serif",
+        "bg": "#000000",
+        "text": "#FFFFFF",
+        "accent": "#FFFFFF"
+      },
+      {
+        "id": "B-04",
+        "label": "Mehr Gefahr?",
+        "headingFont": "\"Inter Tight\", sans-serif",
+        "bodyFont": "\"Inter\", sans-serif",
+        "bg": "#1A1A1A",
+        "text": "#FFFFFF",
+        "accent": "#FF4500"
+      }
+    ],
+    "minimalist": [
+      {
+        "id": "M-01",
+        "label": "Schoen entspannt?",
+        "headingFont": "\"Playfair Display\", serif",
+        "bodyFont": "\"Source Sans 3\", sans-serif",
+        "bg": "#F9F9F7",
+        "text": "#2C2C2C",
+        "accent": "#8A9A8A"
+      },
+      {
+        "id": "M-02",
+        "label": "Ein Hauch von Luxus?",
+        "headingFont": "\"Playfair Display\", serif",
+        "bodyFont": "\"Source Sans 3\", sans-serif",
+        "bg": "#001F3F",
+        "text": "#FFFFFF",
+        "accent": "#D4AF37"
+      },
+      {
+        "id": "M-03",
+        "label": "Galerie-Feeling?",
+        "headingFont": "\"Playfair Display\", serif",
+        "bodyFont": "\"Source Sans 3\", sans-serif",
+        "bg": "#FFFFFF",
+        "text": "#000000",
+        "accent": "#E0E0E0"
+      },
+      {
+        "id": "M-04",
+        "label": "Warm und Erdig?",
+        "headingFont": "\"Playfair Display\", serif",
+        "bodyFont": "\"Source Sans 3\", sans-serif",
+        "bg": "#F2E8DF",
+        "text": "#3D2B1F",
+        "accent": "#BDB76B"
+      }
+    ],
+    "modern": [
+      {
+        "id": "D-01",
+        "label": "Schoen professionell?",
+        "headingFont": "\"Plus Jakarta Sans\", sans-serif",
+        "bodyFont": "\"Roboto\", sans-serif",
+        "bg": "#FFFFFF",
+        "text": "#001F3F",
+        "accent": "#007AFF"
+      },
+      {
+        "id": "D-02",
+        "label": "Eher Dark Mode?",
+        "headingFont": "\"Plus Jakarta Sans\", sans-serif",
+        "bodyFont": "\"Roboto\", sans-serif",
+        "bg": "#121212",
+        "text": "#F0F0F0",
+        "accent": "#BB86FC"
+      },
+      {
+        "id": "D-03",
+        "label": "Mut zur Farbe?",
+        "headingFont": "\"Plus Jakarta Sans\", sans-serif",
+        "bodyFont": "\"Roboto\", sans-serif",
+        "bg": "#FFFFFF",
+        "text": "#2D3436",
+        "accent": "#6C5CE7"
+      },
+      {
+        "id": "D-04",
+        "label": "Radikal aufgeraeumt?",
+        "headingFont": "\"Plus Jakarta Sans\", sans-serif",
+        "bodyFont": "\"Roboto\", sans-serif",
+        "bg": "#F5F5F7",
+        "text": "#1D1D1F",
+        "accent": "#8E8E93"
+      }
+    ],
+    "classic": [
+      {
+        "id": "C-01",
+        "label": "Wie ein Magazin?",
+        "headingFont": "\"Libre Baskerville\", serif",
+        "bodyFont": "\"Lora\", serif",
+        "bg": "#F2E8DF",
+        "text": "#3D2B1F",
+        "accent": "#BF4F26"
+      },
+      {
+        "id": "C-02",
+        "label": "Ein Hauch Geschichte?",
+        "headingFont": "\"Libre Baskerville\", serif",
+        "bodyFont": "\"Lora\", serif",
+        "bg": "#F0F4F0",
+        "text": "#1B3022",
+        "accent": "#2D5A27"
+      },
+      {
+        "id": "C-03",
+        "label": "Sehr serioes?",
+        "headingFont": "\"Libre Baskerville\", serif",
+        "bodyFont": "\"Lora\", serif",
+        "bg": "#FFFFFF",
+        "text": "#002366",
+        "accent": "#C5B358"
+      },
+      {
+        "id": "C-04",
+        "label": "Vintage-Charme?",
+        "headingFont": "\"Libre Baskerville\", serif",
+        "bodyFont": "\"Lora\", serif",
+        "bg": "#FAF3E0",
+        "text": "#5D4037",
+        "accent": "#8D6E63"
+      }
+    ]
+  }
+}

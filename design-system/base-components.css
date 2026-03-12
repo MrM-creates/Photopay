@@ -1,0 +1,190 @@
+/* Flider Base Components v1.0.0-rc2.1
+   Import fonts separately (Google Fonts or local hosting) */
+
+:root {
+  --fs-bg-color: #050505;
+  --fs-surface-color: #121212;
+  --fs-surface-color-light: #1e1e1e;
+  --fs-text-primary: #ffffff;
+  --fs-text-secondary: #a0a0a0;
+  --fs-accent-color: #ffffff;
+  --fs-accent-hover: #e0e0e0;
+  --fs-border-color: rgba(255, 255, 255, 0.1);
+  --fs-border-hover: rgba(255, 255, 255, 0.2);
+  --fs-font-sans: "Space Mono", monospace;
+  --fs-font-serif: "Playfair Display", serif;
+  --fs-font-mono: "Space Mono", monospace;
+  --fs-transition-fast: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --fs-transition-smooth: 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: var(--fs-bg-color);
+  color: var(--fs-text-primary);
+  font-family: var(--fs-font-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.fs-app {
+  min-height: 100vh;
+  background: var(--fs-bg-color);
+  color: var(--fs-text-primary);
+}
+
+.fs-h1,
+.fs-h2,
+.fs-h3 {
+  margin: 0 0 0.75rem;
+  letter-spacing: -0.02em;
+  font-weight: 400;
+  font-family: var(--fs-font-serif);
+}
+
+.fs-h1 {
+  font-size: clamp(2.5rem, 5vw, 4rem);
+  line-height: 1.1;
+}
+
+.fs-h2 {
+  font-size: clamp(2rem, 4vw, 3rem);
+  line-height: 1.2;
+}
+
+.fs-text {
+  margin: 0 0 1rem;
+  color: var(--fs-text-secondary);
+  font-size: 1.1rem;
+}
+
+.fs-glass-panel {
+  background: rgba(18, 18, 18, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--fs-border-color);
+  border-radius: 16px;
+  padding: 2.5rem;
+  transition: border-color var(--fs-transition-fast);
+}
+
+.fs-glass-panel:hover {
+  border-color: var(--fs-border-hover);
+}
+
+.fs-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 50px;
+  padding: 1rem 2.5rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-family: var(--fs-font-mono);
+  cursor: pointer;
+  transition: all var(--fs-transition-fast);
+}
+
+.fs-btn-primary {
+  background: var(--fs-accent-color);
+  color: #000;
+  border: none;
+}
+
+.fs-btn-primary:hover {
+  background: var(--fs-accent-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px rgba(255, 255, 255, 0.1);
+}
+
+.fs-btn-outline {
+  background: transparent;
+  color: var(--fs-text-primary);
+  border: 1px solid var(--fs-border-color);
+}
+
+.fs-btn-outline:hover {
+  border-color: var(--fs-text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.fs-input {
+  width: 100%;
+  border: 1px solid var(--fs-border-color);
+  border-radius: 8px;
+  background: var(--fs-surface-color);
+  color: var(--fs-text-primary);
+  font-size: 1rem;
+  font-family: var(--fs-font-sans);
+  padding: 1rem 1.5rem;
+  outline: none;
+  transition: all var(--fs-transition-fast);
+}
+
+.fs-input:focus {
+  border-color: var(--fs-text-primary);
+  background: var(--fs-surface-color-light);
+}
+
+.fs-card {
+  background: var(--fs-surface-color);
+  border: 1px solid var(--fs-border-color);
+  border-radius: 12px;
+  padding: 1.5rem;
+  transition: all var(--fs-transition-fast);
+}
+
+.fs-card:hover {
+  border-color: var(--fs-accent-hover);
+  transform: translateY(-4px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+}
+
+.fs-fade-in {
+  animation: fs-fade-in var(--fs-transition-smooth) forwards;
+}
+
+@keyframes fs-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Optional vibe bridge:
+   set these from your app runtime (from design-tokens.json)
+   --fs-vibe-bg, --fs-vibe-text, --fs-vibe-accent, --fs-vibe-heading-font, --fs-vibe-body-font
+*/
+.fs-vibe-surface {
+  background: var(--fs-vibe-bg, var(--fs-surface-color));
+  color: var(--fs-vibe-text, var(--fs-text-primary));
+}
+
+.fs-vibe-heading {
+  font-family: var(--fs-vibe-heading-font, var(--fs-font-serif));
+}
+
+.fs-vibe-body {
+  font-family: var(--fs-vibe-body-font, var(--fs-font-sans));
+}
+
+.fs-vibe-accent {
+  color: var(--fs-vibe-accent, var(--fs-accent-color));
+}
