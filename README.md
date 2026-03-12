@@ -53,6 +53,8 @@ Open:
   - `npm run desktop:dev`
 - Start only Electron shell (expects app already running on `http://127.0.0.1:3000`):
   - `npm run desktop:start`
+- Alternative macOS launch via LaunchServices (often more stable in restricted shells):
+  - `npm run desktop:start:open`
 - Build macOS app bundle (`.app` in `release/mac-arm64/` or `release/mac/`):
   - `npm run desktop:build:mac`
 - Optional target URL override for desktop shell:

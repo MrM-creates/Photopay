@@ -10,6 +10,7 @@
     "desktop:dev": "concurrently -k -n NEXT,ELECTRON -c cyan,green \"npm run dev\" \"npm run desktop:open\"",
     "desktop:open": "wait-on http://127.0.0.1:3000 && electron desktop/main.mjs",
     "desktop:start": "electron desktop/main.mjs",
+    "desktop:start:open": "open -n ./node_modules/electron/dist/Electron.app --args desktop/main.mjs",
     "desktop:build:mac": "xattr -cr node_modules/electron/dist/Electron.app && electron-builder --mac dir --publish never",
     "build": "next build",
     "start": "next start",
