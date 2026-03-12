@@ -75,6 +75,17 @@ export async function POST(request: Request, context: RouteContext) {
     return fail("STORAGE_ERROR", upload.error.message, 500);
   }
 
+  const previewUpload = await supabase.storage.from(bucketName).upload(keys.previewKey, file, {
+    contentType: file.type || "application/octet-stream",
+    upsert: false,
+  });
+
+  if (previewUpload.error) {
+    return fail("STORAGE_ERROR", previewUpload.error.message, 500, {
+      stage: "preview_upload",
+    });
+  }
+
   return ok(
     {
       file: {
@@ -91,4 +102,3 @@ export async function POST(request: Request, context: RouteContext) {
     201,
   );
 }
-

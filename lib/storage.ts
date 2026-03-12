@@ -23,10 +23,11 @@ export function buildStorageKeys(galleryId: string, filename: string) {
   const safeFilename = sanitizeFilename(filename);
   const uniqueId = crypto.randomUUID();
   const originalKey = `orig/${galleryId}/${uniqueId}/${safeFilename}`;
+  const previewKey = `preview/${galleryId}/${uniqueId}/${safeFilename}`;
 
   return {
     originalKey,
-    previewKey: originalKey,
+    previewKey,
   };
 }
 
@@ -61,4 +62,3 @@ export async function ensureAssetsBucket(
 
   assetsBucketEnsured = true;
 }
-

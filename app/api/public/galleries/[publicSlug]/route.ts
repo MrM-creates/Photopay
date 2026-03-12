@@ -1,4 +1,5 @@
 import { fail, ok } from "@/lib/http";
+import { getAssetsBucketName } from "@/lib/storage";
 import { createAdminClient } from "@/lib/supabase";
 
 type RouteContext = {
@@ -49,6 +50,16 @@ export async function GET(_request: Request, context: RouteContext) {
     return fail("DB_ERROR", packagesQuery.error.message, 500);
   }
 
+  const bucketName = getAssetsBucketName();
+  const previewUrlByKey = new Map<string, string | null>();
+
+  await Promise.all(
+    assetsQuery.data.map(async (asset) => {
+      const signed = await supabase.storage.from(bucketName).createSignedUrl(asset.storage_key_preview, 60 * 60);
+      previewUrlByKey.set(asset.storage_key_preview, signed.error ? null : signed.data.signedUrl);
+    }),
+  );
+
   return ok({
     gallery: {
       id: galleryQuery.data.id,
@@ -63,6 +74,7 @@ export async function GET(_request: Request, context: RouteContext) {
       width: asset.width,
       height: asset.height,
       previewKey: asset.storage_key_preview,
+      previewUrl: previewUrlByKey.get(asset.storage_key_preview) ?? null,
       watermark: true,
     })),
     packages: packagesQuery.data.map((pkg) => ({
