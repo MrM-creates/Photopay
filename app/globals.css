@@ -694,6 +694,15 @@ pre,
   background: rgba(8, 13, 20, 0.84);
   width: 100%;
   max-width: 132px;
+  cursor: grab;
+}
+
+.selected-file-row:active {
+  cursor: grabbing;
+}
+
+.selected-file-row-dragging {
+  opacity: 0.55;
 }
 
 .selected-file-preview-wrap {
@@ -801,6 +810,112 @@ pre,
 }
 
 .project-asset-actions .btn {
+  padding: 0.28rem 0.52rem;
+  font-size: 0.72rem;
+}
+
+.design-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.design-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(9, 15, 24, 0.9);
+  color: var(--muted);
+  padding: 0.35rem 0.68rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.design-chip-active {
+  border-color: rgba(47, 207, 159, 0.5);
+  background: rgba(18, 48, 41, 0.9);
+  color: var(--accent);
+}
+
+.share-gallery-grid {
+  display: grid;
+  gap: 0.62rem;
+}
+
+.share-gallery-clean {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 170px));
+}
+
+.share-gallery-editorial {
+  grid-template-columns: repeat(auto-fill, minmax(170px, 210px));
+}
+
+.share-gallery-bold {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 240px));
+}
+
+.share-asset-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.5rem;
+  background: rgba(8, 13, 20, 0.84);
+  display: grid;
+  gap: 0.42rem;
+  cursor: grab;
+}
+
+.share-asset-card:active {
+  cursor: grabbing;
+}
+
+.share-asset-card-cover {
+  border-color: rgba(47, 207, 159, 0.5);
+  box-shadow: 0 0 0 1px rgba(47, 207, 159, 0.3);
+}
+
+.share-asset-thumb-wrap {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: rgba(9, 14, 22, 0.95);
+  aspect-ratio: 1 / 1;
+}
+
+.share-asset-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.share-cover-badge {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  border-radius: 999px;
+  border: 1px solid rgba(47, 207, 159, 0.5);
+  background: rgba(9, 28, 24, 0.9);
+  color: var(--accent);
+  padding: 0.12rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.share-asset-name {
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.share-asset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+}
+
+.share-asset-actions .btn {
   padding: 0.28rem 0.52rem;
   font-size: 0.72rem;
 }

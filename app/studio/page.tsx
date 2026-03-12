@@ -55,6 +55,7 @@ type ManagedAsset = {
 
 type WizardStepId = "create" | "assets" | "packages" | "share" | "summary";
 type EntryMode = "new" | "open";
+type GalleryDesign = "clean" | "editorial" | "bold";
 
 const photographerStorageKey = "photopay_photographer_id";
 
@@ -62,7 +63,7 @@ const wizardSteps: Array<{ id: WizardStepId; title: string; short: string }> = [
   { id: "create", title: "Schritt 1: Projekt anlegen", short: "Projekt" },
   { id: "assets", title: "Schritt 2: Bilder hinzufügen", short: "Bilder" },
   { id: "packages", title: "Schritt 3: Pakete festlegen", short: "Pakete" },
-  { id: "share", title: "Schritt 4: Kundenlink freigeben", short: "Freigabe" },
+  { id: "share", title: "Schritt 4: Galerie & Freigabe", short: "Galerie & Freigabe" },
   { id: "summary", title: "Übersicht", short: "Übersicht" },
 ];
 
@@ -88,6 +89,10 @@ function createClientUuid() {
   }
 
   return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+}
+
+function fileFingerprint(file: File) {
+  return `${file.name}__${file.size}__${file.lastModified}`;
 }
 
 function toFriendlyError(error: unknown, fallback: string) {
@@ -174,12 +179,15 @@ export default function StudioPage() {
   const [selectedGalleryId, setSelectedGalleryId] = useState("");
   const [projectAssets, setProjectAssets] = useState<ManagedAsset[]>([]);
   const [packages, setPackages] = useState<PackageRow[]>([]);
+  const [galleryDesign, setGalleryDesign] = useState<GalleryDesign>("clean");
+  const [dragAssetId, setDragAssetId] = useState<string | null>(null);
 
   const [galleryTitle, setGalleryTitle] = useState("Babyshooting Moritz 20260329");
   const [galleryDescription, setGalleryDescription] = useState("Babyshooting im Studio");
   const [galleryPassword, setGalleryPassword] = useState("muster123");
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [dragSelectedFileKey, setDragSelectedFileKey] = useState<string | null>(null);
   const [isDragOverAssets, setIsDragOverAssets] = useState(false);
 
   const [packageName, setPackageName] = useState("10er Paket Digital");
@@ -248,11 +256,11 @@ export default function StudioPage() {
 
   function appendFiles(filesToAppend: File[]) {
     setSelectedFiles((previous) => {
-      const existing = new Set(previous.map((file) => `${file.name}__${file.size}__${file.lastModified}`));
+      const existing = new Set(previous.map((file) => fileFingerprint(file)));
       const next = [...previous];
 
       for (const file of filesToAppend) {
-        const key = `${file.name}__${file.size}__${file.lastModified}`;
+        const key = fileFingerprint(file);
         if (existing.has(key)) continue;
         existing.add(key);
         next.push(file);
@@ -260,6 +268,23 @@ export default function StudioPage() {
 
       return next;
     });
+  }
+
+  function reorderSelectedFilesByDrag(targetFileKey: string) {
+    if (!dragSelectedFileKey || dragSelectedFileKey === targetFileKey) return;
+
+    setSelectedFiles((previous) => {
+      const fromIndex = previous.findIndex((file) => fileFingerprint(file) === dragSelectedFileKey);
+      const toIndex = previous.findIndex((file) => fileFingerprint(file) === targetFileKey);
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return previous;
+
+      const next = [...previous];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+
+    setDragSelectedFileKey(null);
   }
 
   function handleAssetFileInput(event: ChangeEvent<HTMLInputElement>) {
@@ -289,10 +314,10 @@ export default function StudioPage() {
 
   const selectedFilePreviews = useMemo(
     () =>
-      selectedFiles.map((file, index) => ({
+      selectedFiles.map((file) => ({
         file,
         previewUrl: URL.createObjectURL(file),
-        key: `${file.name}-${file.lastModified}-${index}`,
+        key: fileFingerprint(file),
       })),
     [selectedFiles],
   );
@@ -567,24 +592,29 @@ export default function StudioPage() {
     return true;
   }
 
-  async function moveAsset(assetId: string, direction: "up" | "down") {
-    const index = projectAssets.findIndex((asset) => asset.id === assetId);
-    if (index < 0) return;
-    const nextIndex = direction === "up" ? index - 1 : index + 1;
-    if (nextIndex < 0 || nextIndex >= projectAssets.length) return;
+  async function reorderAssetsByDrag(targetAssetId: string) {
+    if (!dragAssetId || dragAssetId === targetAssetId) return;
+
+    const fromIndex = projectAssets.findIndex((asset) => asset.id === dragAssetId);
+    const toIndex = projectAssets.findIndex((asset) => asset.id === targetAssetId);
+    if (fromIndex < 0 || toIndex < 0) return;
 
     const reordered = [...projectAssets];
-    const [moved] = reordered.splice(index, 1);
-    reordered.splice(nextIndex, 0, moved);
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
 
+    setProjectAssets(reordered);
     setLoading(true);
     setNotice(null);
+
     try {
       await persistAssetOrder(reordered.map((asset) => asset.id));
     } catch (error) {
       setNotice({ type: "error", text: toFriendlyError(error, "Die Reihenfolge konnte nicht gespeichert werden.") });
+      await loadProjectAssets(selectedGalleryId);
     } finally {
       setLoading(false);
+      setDragAssetId(null);
     }
   }
 
@@ -868,20 +898,15 @@ export default function StudioPage() {
         <section className="card grid" style={{ gap: "0.75rem" }}>
           <h2 style={{ marginBottom: 0 }}>Schritt 2: Bilder hinzufügen</h2>
           <p className="helper" style={{ marginBottom: 0 }}>
-            Füge die gewünschten Bilder im aktiven Projekt hinzu.
+            Füge die gewünschten Bilder im aktiven Projekt hinzu. Cover und finale Galerie-Reihenfolge legst du im Freigabe-Schritt fest.
           </p>
 
           {!progress.hasGallery ? (
             <div className="notice notice-error">Bitte zuerst in Schritt 1 ein Projekt anlegen.</div>
           ) : (
             <>
-              <div className="notice notice-muted small">Aktives Projekt: {currentProjectLabel}</div>
-
               <form className="grid" onSubmit={handleSeedAssets} style={{ gap: "0.65rem" }}>
                 <div>
-                  <label className="label" htmlFor="asset-input">
-                    Bilder auswählen
-                  </label>
                   <input
                     accept="image/*"
                     id="asset-input"
@@ -925,9 +950,26 @@ export default function StudioPage() {
                 </div>
 
                 {selectedFiles.length > 0 ? (
-                  <div className="selected-files">
-                    {selectedFilePreviews.map((preview, index) => (
-                      <div className="selected-file-row" key={preview.key}>
+                  <>
+                    <p className="small muted" style={{ marginBottom: 0 }}>
+                      Tipp: Du kannst die ausgewählten Bilder per Drag-and-Drop umsortieren.
+                    </p>
+                    <div className="selected-files">
+                      {selectedFilePreviews.map((preview, index) => (
+                        <div
+                          className={`selected-file-row ${dragSelectedFileKey === preview.key ? "selected-file-row-dragging" : ""}`}
+                          draggable
+                          key={preview.key}
+                          onDragEnd={() => setDragSelectedFileKey(null)}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                          }}
+                          onDragStart={() => setDragSelectedFileKey(preview.key)}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            reorderSelectedFilesByDrag(preview.key);
+                          }}
+                        >
                         <div className="selected-file-preview-wrap">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
@@ -947,9 +989,10 @@ export default function StudioPage() {
                             Entfernen
                           </button>
                         </div>
-                      </div>
-                    ))}
-                  </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 ) : (
                   <p className="small muted" style={{ marginBottom: 0 }}>
                     Noch keine Bilder ausgewählt.
@@ -957,71 +1000,6 @@ export default function StudioPage() {
                 )}
               </form>
 
-              {projectAssets.length > 0 ? (
-                <div className="grid" style={{ gap: "0.6rem" }}>
-                  <h3 style={{ marginBottom: 0 }}>Bilder im Projekt</h3>
-                  <div className="project-assets-grid">
-                    {projectAssets.map((asset, index) => {
-                      const isCover = selectedGallery?.coverAssetId === asset.id;
-                      return (
-                        <article className="project-asset-card" key={asset.id}>
-                          <div className="project-asset-preview-wrap">
-                            {asset.previewUrl ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img alt={asset.filename} className="project-asset-preview" src={asset.previewUrl} />
-                            ) : (
-                              <div className="project-asset-placeholder small muted">Kein Preview</div>
-                            )}
-                          </div>
-                          <p className="small project-asset-name">{asset.filename}</p>
-                          <div className="project-asset-actions">
-                            <button
-                              className="btn btn-secondary"
-                              disabled={loading || index === 0}
-                              onClick={() => {
-                                void moveAsset(asset.id, "up");
-                              }}
-                              type="button"
-                            >
-                              ↑
-                            </button>
-                            <button
-                              className="btn btn-secondary"
-                              disabled={loading || index === projectAssets.length - 1}
-                              onClick={() => {
-                                void moveAsset(asset.id, "down");
-                              }}
-                              type="button"
-                            >
-                              ↓
-                            </button>
-                            <button
-                              className={`btn ${isCover ? "" : "btn-secondary"}`}
-                              disabled={loading}
-                              onClick={() => {
-                                void setCoverAsset(asset.id);
-                              }}
-                              type="button"
-                            >
-                              {isCover ? "Cover" : "Als Cover"}
-                            </button>
-                            <button
-                              className="btn btn-secondary"
-                              disabled={loading}
-                              onClick={() => {
-                                void deleteAsset(asset.id);
-                              }}
-                              type="button"
-                            >
-                              Entfernen
-                            </button>
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
             </>
           )}
         </section>
@@ -1142,7 +1120,7 @@ export default function StudioPage() {
 
       {activeStep === "share" ? (
         <section className="card grid" style={{ gap: "0.75rem" }}>
-          <h2 style={{ marginBottom: 0 }}>Schritt 4: Kundenlink freigeben</h2>
+          <h2 style={{ marginBottom: 0 }}>Schritt 4: Galerie & Freigabe</h2>
           <p className="helper" style={{ marginBottom: 0 }}>
             Wenn alles passt, schaltest du das aktive Projekt live und teilst den Link mit deinen Kunden.
           </p>
@@ -1152,6 +1130,103 @@ export default function StudioPage() {
           ) : (
             <>
               <div className="notice notice-muted small">Aktives Projekt: {currentProjectLabel}</div>
+
+              <div className="grid" style={{ gap: "0.5rem" }}>
+                <label className="label" htmlFor="gallery-design">
+                  Galerie-Design
+                </label>
+                <div className="design-switch" id="gallery-design">
+                  <button
+                    className={`design-chip ${galleryDesign === "clean" ? "design-chip-active" : ""}`}
+                    onClick={() => setGalleryDesign("clean")}
+                    type="button"
+                  >
+                    Clean
+                  </button>
+                  <button
+                    className={`design-chip ${galleryDesign === "editorial" ? "design-chip-active" : ""}`}
+                    onClick={() => setGalleryDesign("editorial")}
+                    type="button"
+                  >
+                    Editorial
+                  </button>
+                  <button
+                    className={`design-chip ${galleryDesign === "bold" ? "design-chip-active" : ""}`}
+                    onClick={() => setGalleryDesign("bold")}
+                    type="button"
+                  >
+                    Bold
+                  </button>
+                </div>
+              </div>
+
+              {projectAssets.length > 0 ? (
+                <div className="grid" style={{ gap: "0.6rem" }}>
+                  <h3 style={{ marginBottom: 0 }}>Galerie-Vorschau (Freigabe)</h3>
+                  <p className="small muted" style={{ marginBottom: 0 }}>
+                    Hier kannst du Reihenfolge per Drag ändern und ein Cover festlegen.
+                  </p>
+                  <div className={`share-gallery-grid share-gallery-${galleryDesign}`}>
+                    {projectAssets.map((asset) => {
+                      const isCover = selectedGallery?.coverAssetId === asset.id;
+
+                      return (
+                        <article
+                          className={`share-asset-card ${isCover ? "share-asset-card-cover" : ""}`}
+                          draggable
+                          key={asset.id}
+                          onDragEnd={() => setDragAssetId(null)}
+                          onDragOver={(event) => {
+                            event.preventDefault();
+                          }}
+                          onDragStart={() => setDragAssetId(asset.id)}
+                          onDrop={(event) => {
+                            event.preventDefault();
+                            void reorderAssetsByDrag(asset.id);
+                          }}
+                        >
+                          <div className="share-asset-thumb-wrap">
+                            {asset.previewUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img alt={asset.filename} className="share-asset-thumb" src={asset.previewUrl} />
+                            ) : (
+                              <div className="project-asset-placeholder small muted">Kein Preview</div>
+                            )}
+                            {isCover ? <span className="share-cover-badge">Cover</span> : null}
+                          </div>
+                          <p className="small share-asset-name">{asset.filename}</p>
+                          <div className="share-asset-actions">
+                            <button
+                              className={`btn ${isCover ? "" : "btn-secondary"}`}
+                              disabled={loading}
+                              onClick={() => {
+                                void setCoverAsset(asset.id);
+                              }}
+                              type="button"
+                            >
+                              {isCover ? "Cover gesetzt" : "Als Cover"}
+                            </button>
+                            <button
+                              className="btn btn-secondary"
+                              disabled={loading}
+                              onClick={() => {
+                                void deleteAsset(asset.id);
+                              }}
+                              type="button"
+                            >
+                              Entfernen
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <div className="notice notice-muted">
+                  Noch keine Bilder im Projekt gespeichert. Bitte zuerst in Schritt 2 Bilder hochladen.
+                </div>
+              )}
 
               <div className="toolbar">
                 <button className="btn" disabled={loading || !selectedGalleryId} onClick={handlePublishGallery} type="button">

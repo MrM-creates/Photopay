@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 type PromptOutcome = "accepted" | "dismissed";
@@ -23,9 +24,12 @@ function isStandaloneDisplayMode(): boolean {
 }
 
 export default function PwaClient() {
+  const pathname = usePathname();
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(() => isStandaloneDisplayMode());
   const [dismissed, setDismissed] = useState(false);
+
+  const isStudioRoute = pathname?.startsWith("/studio") ?? false;
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) {
@@ -60,8 +64,8 @@ export default function PwaClient() {
   }, []);
 
   const shouldShowPrompt = useMemo(
-    () => !installed && !dismissed && deferredPrompt !== null,
-    [deferredPrompt, dismissed, installed],
+    () => !isStudioRoute && !installed && !dismissed && deferredPrompt !== null,
+    [deferredPrompt, dismissed, installed, isStudioRoute],
   );
 
   const handleInstall = async () => {
