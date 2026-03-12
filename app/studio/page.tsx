@@ -14,8 +14,25 @@ type Gallery = {
   coverAssetId?: string | null;
   archiveAfterDays?: number | null;
   neverAutoArchive?: boolean;
+  customerId?: string | null;
+  customerName?: string | null;
+  customerEmail?: string | null;
+  customerNote?: string | null;
+  customerStatus?: "new" | "active" | "downloads" | "completed";
+  lastAccessAt?: string | null;
+  paidOrderCount?: number;
+  purchasedAssetCount?: number;
+  downloadedAssetCount?: number;
   packageCount: number;
   assetCount: number;
+};
+
+type Customer = {
+  id: string;
+  fullName: string;
+  email: string;
+  note: string | null;
+  lastUsedAt: string | null;
 };
 
 type PackageRow = {
@@ -72,6 +89,30 @@ const wizardSteps: Array<{ id: WizardStepId; title: string; short: string }> = [
 
 function formatChf(cents: number) {
   return new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF" }).format(cents / 100);
+}
+
+function formatDateTime(input: string | null | undefined) {
+  if (!input) return "Noch kein Zugriff";
+  const value = new Date(input);
+  if (Number.isNaN(value.getTime())) return "Noch kein Zugriff";
+  return new Intl.DateTimeFormat("de-CH", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(value);
+}
+
+function toCustomerStatusLabel(status: Gallery["customerStatus"]) {
+  if (status === "completed") return "abgeschlossen";
+  if (status === "downloads") return "downloads";
+  if (status === "active") return "aktiv";
+  return "neu";
+}
+
+function toCustomerStatusClass(status: Gallery["customerStatus"]) {
+  if (status === "completed") return "status-published";
+  if (status === "downloads") return "status-open";
+  if (status === "active") return "status-active";
+  return "status-draft";
 }
 
 function createClientUuid() {
@@ -193,6 +234,7 @@ export default function StudioPage() {
 
   const [galleries, setGalleries] = useState<Gallery[]>([]);
   const [selectedGalleryId, setSelectedGalleryId] = useState("");
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [projectAssets, setProjectAssets] = useState<ManagedAsset[]>([]);
   const [packages, setPackages] = useState<PackageRow[]>([]);
   const [galleryDesign, setGalleryDesign] = useState<GalleryDesign>("clean");
@@ -201,6 +243,16 @@ export default function StudioPage() {
   const [galleryTitle, setGalleryTitle] = useState("Babyshooting Moritz 20260329");
   const [galleryDescription, setGalleryDescription] = useState("Babyshooting im Studio");
   const [galleryPassword, setGalleryPassword] = useState("");
+  const [createCustomerMode, setCreateCustomerMode] = useState<"none" | "existing" | "new">("none");
+  const [createCustomerId, setCreateCustomerId] = useState("");
+  const [createCustomerName, setCreateCustomerName] = useState("");
+  const [createCustomerEmail, setCreateCustomerEmail] = useState("");
+  const [createCustomerNote, setCreateCustomerNote] = useState("");
+  const [shareCustomerMode, setShareCustomerMode] = useState<"existing" | "new">("new");
+  const [shareCustomerId, setShareCustomerId] = useState("");
+  const [shareCustomerName, setShareCustomerName] = useState("");
+  const [shareCustomerEmail, setShareCustomerEmail] = useState("");
+  const [shareCustomerNote, setShareCustomerNote] = useState("");
   const [archiveAfterDays, setArchiveAfterDays] = useState("90");
   const [neverAutoArchive, setNeverAutoArchive] = useState(false);
 
@@ -280,6 +332,34 @@ export default function StudioPage() {
   const archiveDaysNumber = Number(archiveAfterDays);
   const archiveDaysIsValid =
     Number.isInteger(archiveDaysNumber) && archiveDaysNumber >= 7 && archiveDaysNumber <= 3650;
+
+  const customerSelectionIsSaved = useMemo(() => {
+    if (!selectedGallery) return true;
+
+    if (shareCustomerMode === "existing") {
+      if (!shareCustomerId) return false;
+      return selectedGallery.customerId === shareCustomerId;
+    }
+
+    const hasDraftCustomerValues =
+      Boolean(shareCustomerName.trim()) || Boolean(shareCustomerEmail.trim()) || Boolean(shareCustomerNote.trim());
+    if (!hasDraftCustomerValues) {
+      return !selectedGallery.customerId;
+    }
+
+    return (
+      (selectedGallery.customerName ?? "").trim() === shareCustomerName.trim() &&
+      (selectedGallery.customerEmail ?? "").trim().toLowerCase() === shareCustomerEmail.trim().toLowerCase() &&
+      (selectedGallery.customerNote ?? "").trim() === shareCustomerNote.trim()
+    );
+  }, [
+    selectedGallery,
+    shareCustomerEmail,
+    shareCustomerId,
+    shareCustomerMode,
+    shareCustomerName,
+    shareCustomerNote,
+  ]);
 
   const showGlobalNavigation = !(activeStep === "create" && entryMode === "new");
 
@@ -506,6 +586,19 @@ export default function StudioPage() {
     });
   }, [photographerId, withPhotographerHeaders]);
 
+  const loadCustomers = useCallback(async () => {
+    if (!photographerId) return;
+
+    const response = await withPhotographerHeaders("/api/customers", { method: "GET" });
+    const json = await response.json();
+
+    if (!response.ok) {
+      throw new Error(json?.error?.message ?? "Kunden konnten nicht geladen werden");
+    }
+
+    setCustomers((json.customers ?? []) as Customer[]);
+  }, [photographerId, withPhotographerHeaders]);
+
   const loadPackages = useCallback(
     async (galleryId: string) => {
       if (!galleryId) {
@@ -555,7 +648,10 @@ export default function StudioPage() {
       setErrorNotice(error, "Projekte konnten nicht geladen werden.");
       setSaveStatus("error");
     });
-  }, [photographerId, loadGalleries, setErrorNotice]);
+    void loadCustomers().catch((error) => {
+      setErrorNotice(error, "Kunden konnten nicht geladen werden.");
+    });
+  }, [photographerId, loadCustomers, loadGalleries, setErrorNotice]);
 
   useEffect(() => {
     if (!selectedGalleryId || !photographerId) {
@@ -584,12 +680,56 @@ export default function StudioPage() {
     if (!selectedGallery) {
       setNeverAutoArchive(false);
       setArchiveAfterDays("90");
+      setShareCustomerMode("new");
+      setShareCustomerId("");
+      setShareCustomerName("");
+      setShareCustomerEmail("");
+      setShareCustomerNote("");
       return;
     }
 
     setNeverAutoArchive(Boolean(selectedGallery.neverAutoArchive));
     setArchiveAfterDays(String(selectedGallery.archiveAfterDays ?? 90));
+    if (selectedGallery.customerId) {
+      setShareCustomerMode("existing");
+      setShareCustomerId(selectedGallery.customerId);
+      setShareCustomerName(selectedGallery.customerName ?? "");
+      setShareCustomerEmail(selectedGallery.customerEmail ?? "");
+      setShareCustomerNote(selectedGallery.customerNote ?? "");
+    } else {
+      setShareCustomerMode("new");
+      setShareCustomerId("");
+      setShareCustomerName("");
+      setShareCustomerEmail("");
+      setShareCustomerNote("");
+    }
   }, [selectedGallery]);
+
+  useEffect(() => {
+    if (createCustomerMode !== "existing") return;
+    if (createCustomerId) return;
+    if (customers.length === 0) return;
+    setCreateCustomerId(customers[0].id);
+  }, [createCustomerId, createCustomerMode, customers]);
+
+  useEffect(() => {
+    if (customers.length > 0) return;
+    if (shareCustomerMode === "existing") {
+      setShareCustomerMode("new");
+      setShareCustomerId("");
+    }
+  }, [customers.length, shareCustomerMode]);
+
+  useEffect(() => {
+    if (shareCustomerMode !== "existing") return;
+    if (shareCustomerId) return;
+    if (customers.length === 0) return;
+    const first = customers[0];
+    setShareCustomerId(first.id);
+    setShareCustomerName(first.fullName);
+    setShareCustomerEmail(first.email);
+    setShareCustomerNote(first.note ?? "");
+  }, [customers, shareCustomerId, shareCustomerMode]);
 
   useEffect(() => {
     if (!requestedProjectId || galleries.length === 0) return;
@@ -609,16 +749,40 @@ export default function StudioPage() {
 
   async function handleCreateGallery(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (createCustomerMode === "existing" && !createCustomerId) {
+      setNotice({ type: "error", text: "Bitte wähle einen bestehenden Kunden aus oder wähle „Noch keinen Kunden zuordnen“." });
+      setSaveStatus("error");
+      return;
+    }
+    if (createCustomerMode === "new" && (!createCustomerName.trim() || !createCustomerEmail.trim())) {
+      setNotice({ type: "error", text: "Bitte Kundenname und E-Mail ausfüllen oder die Kundenzuordnung deaktivieren." });
+      setSaveStatus("error");
+      return;
+    }
+
     setLoading(true);
     setSaveStatus("saving");
     setNotice(null);
 
     try {
+      const customerPayload =
+        createCustomerMode === "existing" && createCustomerId
+          ? { mode: "existing" as const, customerId: createCustomerId }
+          : createCustomerMode === "new" && createCustomerName.trim() && createCustomerEmail.trim()
+            ? {
+                mode: "new" as const,
+                fullName: createCustomerName.trim(),
+                email: createCustomerEmail.trim(),
+                note: createCustomerNote.trim() || undefined,
+              }
+            : undefined;
+
       const response = await withPhotographerHeaders("/api/galleries", {
         method: "POST",
         body: JSON.stringify({
           title: galleryTitle,
           description: galleryDescription,
+          customer: customerPayload,
         }),
       });
       const json = await response.json();
@@ -628,6 +792,7 @@ export default function StudioPage() {
       }
 
       await loadGalleries();
+      await loadCustomers();
       setSelectedGalleryId(json.id);
       setFailedUploadKeys([]);
       setNotice(null);
@@ -938,6 +1103,64 @@ export default function StudioPage() {
     });
   }
 
+  async function handleSaveShareCustomer() {
+    if (!selectedGalleryId) {
+      setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
+      setSaveStatus("error");
+      return;
+    }
+
+    if (shareCustomerMode === "existing" && !shareCustomerId) {
+      setNotice({ type: "error", text: "Bitte wähle einen bestehenden Kunden aus." });
+      setSaveStatus("error");
+      return;
+    }
+
+    if (shareCustomerMode === "new" && (!shareCustomerName.trim() || !shareCustomerEmail.trim())) {
+      setNotice({ type: "error", text: "Bitte Name und E-Mail des Kunden ausfüllen." });
+      setSaveStatus("error");
+      return;
+    }
+
+    const projectId = selectedGalleryId;
+    await runWithProjectWriteLock(projectId, async () => {
+      setLoading(true);
+      setSaveStatus("saving");
+      setNotice(null);
+      try {
+        const body =
+          shareCustomerMode === "existing"
+            ? { mode: "select", customerId: shareCustomerId }
+            : {
+                mode: "upsert",
+                fullName: shareCustomerName.trim(),
+                email: shareCustomerEmail.trim(),
+                note: shareCustomerNote.trim() || undefined,
+              };
+
+        const response = await withProjectHeaders(projectId, `/api/galleries/${projectId}/customer`, {
+          method: "PATCH",
+          body: JSON.stringify(body),
+        });
+        const json = await response.json();
+
+        if (!response.ok) {
+          throw new Error(json?.error?.code ?? json?.error?.message ?? "Kunde konnte nicht gespeichert werden");
+        }
+
+        await loadCustomers();
+        await loadGalleries();
+        setSaveStatus("saved");
+        setNotice(null);
+      } catch (error) {
+        setSaveStatus("error");
+        setErrorNotice(error, "Der Kunde konnte nicht gespeichert werden.");
+      } finally {
+        setLoading(false);
+      }
+    });
+  }
+
   async function handlePublishGallery() {
     if (!selectedGalleryId) {
       setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
@@ -946,6 +1169,11 @@ export default function StudioPage() {
     }
     if (galleryPassword.trim().length < 6) {
       setNotice({ type: "error", text: "Bitte setze ein Kunden-Passwort mit mindestens 6 Zeichen." });
+      setSaveStatus("error");
+      return;
+    }
+    if (!customerSelectionIsSaved) {
+      setNotice({ type: "error", text: "Bitte zuerst den Kunden mit „Kunde speichern“ übernehmen." });
       setSaveStatus("error");
       return;
     }
@@ -994,7 +1222,7 @@ export default function StudioPage() {
     setLoading(true);
     setNotice(null);
     try {
-      await loadGalleries();
+      await Promise.all([loadGalleries(), loadCustomers()]);
       if (selectedGalleryId) {
         await loadPackages(selectedGalleryId);
         await loadProjectAssets(selectedGalleryId);
@@ -1116,10 +1344,20 @@ export default function StudioPage() {
                       type="button"
                     >
                       <div className="kv" style={{ alignItems: "flex-start" }}>
-                        <strong>{gallery.title}</strong>
-                        <span className={`status ${gallery.status === "published" ? "status-published" : "status-draft"}`}>
-                          {gallery.status === "published" ? "live" : "entwurf"}
-                        </span>
+                        <div className="grid" style={{ gap: "0.35rem" }}>
+                          <strong>{gallery.title}</strong>
+                          <div className="toolbar" style={{ gap: "0.4rem" }}>
+                            <span className={`status ${gallery.status === "published" ? "status-published" : "status-draft"}`}>
+                              {gallery.status === "published" ? "live" : "entwurf"}
+                            </span>
+                            <span className={`status ${toCustomerStatusClass(gallery.customerStatus)}`}>
+                              {toCustomerStatusLabel(gallery.customerStatus)}
+                            </span>
+                          </div>
+                          <p className="small muted" style={{ marginBottom: 0 }}>
+                            {gallery.customerName ? `${gallery.customerName} (${gallery.customerEmail ?? "ohne E-Mail"})` : "Kein Kunde zugeordnet"}
+                          </p>
+                        </div>
                       </div>
                     </button>
                   ))}
@@ -1161,8 +1399,93 @@ export default function StudioPage() {
                   />
                 </div>
 
+                <div className="grid" style={{ gap: "0.45rem" }}>
+                  <label className="label">Kunde (optional)</label>
+                  <select
+                    className="select"
+                    onChange={(event) => setCreateCustomerMode(event.target.value as "none" | "existing" | "new")}
+                    value={createCustomerMode}
+                  >
+                    <option value="none">Noch keinen Kunden zuordnen</option>
+                    {customers.length > 0 ? <option value="existing">Bestehenden Kunden auswählen</option> : null}
+                    <option value="new">Neuen Kunden erfassen</option>
+                  </select>
+
+                  {createCustomerMode === "existing" ? (
+                    <div>
+                      <label className="label" htmlFor="create-customer-existing">
+                        Bestehender Kunde
+                      </label>
+                      <select
+                        className="select"
+                        id="create-customer-existing"
+                        onChange={(event) => setCreateCustomerId(event.target.value)}
+                        value={createCustomerId}
+                      >
+                        <option value="">Bitte wählen</option>
+                        {customers.map((customer) => (
+                          <option key={customer.id} value={customer.id}>
+                            {customer.fullName} ({customer.email})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+
+                  {createCustomerMode === "new" ? (
+                    <div className="grid" style={{ gap: "0.45rem" }}>
+                      <div className="grid grid-2">
+                        <div>
+                          <label className="label" htmlFor="create-customer-name">
+                            Kundenname
+                          </label>
+                          <input
+                            className="input"
+                            id="create-customer-name"
+                            onChange={(event) => setCreateCustomerName(event.target.value)}
+                            placeholder="z. B. Familie Muster"
+                            value={createCustomerName}
+                          />
+                        </div>
+                        <div>
+                          <label className="label" htmlFor="create-customer-email">
+                            Kunden-E-Mail
+                          </label>
+                          <input
+                            className="input"
+                            id="create-customer-email"
+                            onChange={(event) => setCreateCustomerEmail(event.target.value)}
+                            placeholder="kunde@example.com"
+                            type="email"
+                            value={createCustomerEmail}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="create-customer-note">
+                          Notiz (optional)
+                        </label>
+                        <input
+                          className="input"
+                          id="create-customer-note"
+                          onChange={(event) => setCreateCustomerNote(event.target.value)}
+                          value={createCustomerNote}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
                 <div className="toolbar" style={{ justifyContent: "flex-end" }}>
-                  <button className="btn" disabled={loading} type="submit">
+                  <button
+                    className="btn"
+                    disabled={
+                      loading ||
+                      (createCustomerMode === "existing" && !createCustomerId) ||
+                      (createCustomerMode === "new" && (!createCustomerName.trim() || !createCustomerEmail.trim()))
+                    }
+                    type="submit"
+                  >
                     Weiter
                   </button>
                 </div>
@@ -1450,6 +1773,93 @@ export default function StudioPage() {
                 </div>
               </div>
 
+              <div className="grid" style={{ gap: "0.45rem" }}>
+                <label className="label">Kunde für diese Freigabe</label>
+                <select
+                  className="select"
+                  onChange={(event) => setShareCustomerMode(event.target.value as "existing" | "new")}
+                  value={shareCustomerMode}
+                >
+                  {customers.length > 0 ? <option value="existing">Bestehenden Kunden wählen</option> : null}
+                  <option value="new">Neuen Kunden erfassen</option>
+                </select>
+
+                {shareCustomerMode === "existing" ? (
+                  <div>
+                    <label className="label" htmlFor="share-customer-existing">
+                      Bestehender Kunde
+                    </label>
+                    <select
+                      className="select"
+                      id="share-customer-existing"
+                      onChange={(event) => {
+                        const nextId = event.target.value;
+                        setShareCustomerId(nextId);
+                        const selected = customers.find((entry) => entry.id === nextId);
+                        setShareCustomerName(selected?.fullName ?? "");
+                        setShareCustomerEmail(selected?.email ?? "");
+                        setShareCustomerNote(selected?.note ?? "");
+                      }}
+                      value={shareCustomerId}
+                    >
+                      <option value="">Bitte wählen</option>
+                      {customers.map((customer) => (
+                        <option key={customer.id} value={customer.id}>
+                          {customer.fullName} ({customer.email})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="grid" style={{ gap: "0.45rem" }}>
+                    <div className="grid grid-2">
+                      <div>
+                        <label className="label" htmlFor="share-customer-name">
+                          Kundenname
+                        </label>
+                        <input
+                          className="input"
+                          id="share-customer-name"
+                          onChange={(event) => setShareCustomerName(event.target.value)}
+                          placeholder="z. B. Familie Muster"
+                          value={shareCustomerName}
+                        />
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="share-customer-email">
+                          Kunden-E-Mail
+                        </label>
+                        <input
+                          className="input"
+                          id="share-customer-email"
+                          onChange={(event) => setShareCustomerEmail(event.target.value)}
+                          placeholder="kunde@example.com"
+                          type="email"
+                          value={shareCustomerEmail}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="label" htmlFor="share-customer-note">
+                        Notiz (optional)
+                      </label>
+                      <input
+                        className="input"
+                        id="share-customer-note"
+                        onChange={(event) => setShareCustomerNote(event.target.value)}
+                        value={shareCustomerNote}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="toolbar">
+                  <button className="btn btn-secondary" disabled={loading} onClick={() => void handleSaveShareCustomer()} type="button">
+                    Kunde speichern
+                  </button>
+                </div>
+              </div>
+
               <div className="grid" style={{ gap: "0.4rem" }}>
                 <label className="label" htmlFor="share-password">
                   Kunden-Passwort
@@ -1461,6 +1871,14 @@ export default function StudioPage() {
                   placeholder="Mindestens 6 Zeichen"
                   value={galleryPassword}
                 />
+                <p className="small muted" style={{ marginBottom: 0 }}>
+                  Freigabe-E-Mail: {selectedGallery?.customerEmail ?? "Noch keine Kunden-E-Mail hinterlegt"}
+                </p>
+                {!selectedGallery?.customerEmail ? (
+                  <p className="small muted" style={{ marginBottom: 0 }}>
+                    Du kannst die Galerie trotzdem veröffentlichen und den Link manuell teilen.
+                  </p>
+                ) : null}
               </div>
 
               <div className="grid" style={{ gap: "0.4rem" }}>
@@ -1575,6 +1993,7 @@ export default function StudioPage() {
                     loading ||
                     !selectedGalleryId ||
                     galleryPassword.trim().length < 6 ||
+                    !customerSelectionIsSaved ||
                     (!neverAutoArchive && !archiveDaysIsValid)
                   }
                   onClick={handlePublishGallery}
@@ -1630,6 +2049,27 @@ export default function StudioPage() {
               Freigabe: {progress.isPublished ? "erledigt" : "offen"}
             </div>
           </div>
+
+          {selectedGallery ? (
+            <div className="notice notice-muted">
+              <p className="small" style={{ marginBottom: "0.4rem" }}>
+                Kunde:{" "}
+                <strong>{selectedGallery.customerName ? `${selectedGallery.customerName} (${selectedGallery.customerEmail ?? "ohne E-Mail"})` : "Kein Kunde zugeordnet"}</strong>
+              </p>
+              <p className="small" style={{ marginBottom: "0.35rem" }}>
+                Letzter Zugriff: <strong>{formatDateTime(selectedGallery.lastAccessAt)}</strong>
+              </p>
+              <p className="small" style={{ marginBottom: "0.35rem" }}>
+                Bezahlte Bestellungen: <strong>{selectedGallery.paidOrderCount ?? 0}</strong>
+              </p>
+              <p className="small" style={{ marginBottom: 0 }}>
+                Downloads:{" "}
+                <strong>
+                  {selectedGallery.downloadedAssetCount ?? 0}/{selectedGallery.purchasedAssetCount ?? 0}
+                </strong>
+              </p>
+            </div>
+          ) : null}
 
           {selectedGallery ? (
             <div className="link-box">

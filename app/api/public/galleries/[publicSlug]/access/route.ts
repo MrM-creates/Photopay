@@ -42,6 +42,14 @@ export async function POST(request: Request, context: RouteContext) {
     return fail("GALLERY_ACCESS_DENIED", "Invalid password", 401);
   }
 
+  const accessEvent = await supabase.from("gallery_access_events").insert({
+    gallery_id: gallery.data.id,
+  });
+
+  if (accessEvent.error && accessEvent.error.code !== "42P01") {
+    return fail("DB_ERROR", accessEvent.error.message, 500);
+  }
+
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
   return ok({
