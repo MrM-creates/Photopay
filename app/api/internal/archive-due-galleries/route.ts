@@ -1,4 +1,5 @@
 import { fail, ok } from "@/lib/http";
+import { isMissingSchemaObjectError } from "@/lib/db-errors";
 import { createAdminClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
@@ -40,7 +41,7 @@ export async function POST(request: Request) {
     .select("id,status,published_at,archive_after_days,never_auto_archive")
     .eq("status", "published");
 
-  if (lifecycleQuery.error?.code === "42703") {
+  if (isMissingSchemaObjectError(lifecycleQuery.error)) {
     return ok({
       checked: 0,
       archived: 0,

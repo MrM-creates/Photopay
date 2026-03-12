@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { readPhotographerId } from "@/lib/auth";
 import { upsertCustomerForPhotographer } from "@/lib/customers";
+import { isMissingSchemaObjectError } from "@/lib/db-errors";
 import { fail, ok } from "@/lib/http";
 import { createAdminClient } from "@/lib/supabase";
 
@@ -25,7 +26,7 @@ export async function GET(request: Request) {
     .order("last_used_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
 
-  if (customers.error?.code === "42P01") {
+  if (isMissingSchemaObjectError(customers.error)) {
     return ok({ customers: [] });
   }
 
@@ -65,6 +66,13 @@ export async function POST(request: Request) {
   });
 
   if (upsert.error) {
+    if (isMissingSchemaObjectError(upsert.error)) {
+      return fail(
+        "FEATURE_NOT_READY",
+        "Customer management is not available yet. Please run migration 20260312_0003_customers_and_engagement.sql.",
+        409,
+      );
+    }
     return fail("DB_ERROR", upsert.error.message, 500);
   }
 

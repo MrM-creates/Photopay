@@ -23,6 +23,7 @@ type Gallery = {
   paidOrderCount?: number;
   purchasedAssetCount?: number;
   downloadedAssetCount?: number;
+  createdAt: string;
   packageCount: number;
   assetCount: number;
 };
@@ -102,10 +103,10 @@ function formatDateTime(input: string | null | undefined) {
 }
 
 function toCustomerStatusLabel(status: Gallery["customerStatus"]) {
-  if (status === "completed") return "abgeschlossen";
-  if (status === "downloads") return "downloads";
-  if (status === "active") return "aktiv";
-  return "neu";
+  if (status === "completed") return "Download abgeschlossen";
+  if (status === "downloads") return "Downloads gestartet";
+  if (status === "active") return "Galerie geöffnet";
+  return "Noch nicht geöffnet";
 }
 
 function toCustomerStatusClass(status: Gallery["customerStatus"]) {
@@ -142,6 +143,10 @@ function fileFingerprint(file: File) {
 function toFriendlyError(error: unknown, fallback: string) {
   const raw = error instanceof Error ? error.message : "";
   const lower = raw.toLowerCase();
+
+  if (raw.includes("DUPLICATE_PROJECT_NAME")) {
+    return "Dieser Projektname existiert bereits. Bitte wähle einen anderen Namen.";
+  }
 
   if (lower.includes("failed to fetch") || lower.includes("network")) {
     return "Ich konnte den Server gerade nicht erreichen. Bitte versuche es in ein paar Sekunden erneut.";
@@ -268,9 +273,12 @@ export default function StudioPage() {
   const [extraPrice, setExtraPrice] = useState("15");
 
   const [loading, setLoading] = useState(false);
+  const [galleriesReady, setGalleriesReady] = useState(false);
+  const [galleriesLoadFailed, setGalleriesLoadFailed] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "partial" | "error">("idle");
   const [notice, setNotice] = useState<StudioNotice | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const projectFolderInputRef = useRef<HTMLInputElement | null>(null);
   const projectWriteQueueRef = useRef<Map<string, Promise<void>>>(new Map());
 
   const selectedGallery = useMemo(
@@ -579,6 +587,8 @@ export default function StudioPage() {
 
     const next = (json.galleries ?? []) as Gallery[];
     setGalleries(next);
+    setGalleriesReady(true);
+    setGalleriesLoadFailed(false);
     setSelectedGalleryId((previous) => {
       if (!previous && next.length > 0) return next[0].id;
       if (previous && !next.some((entry) => entry.id === previous) && next.length > 0) return next[0].id;
@@ -643,8 +653,12 @@ export default function StudioPage() {
 
   useEffect(() => {
     if (!photographerId) return;
+    setGalleriesReady(false);
+    setGalleriesLoadFailed(false);
 
     void loadGalleries().catch((error) => {
+      setGalleriesReady(true);
+      setGalleriesLoadFailed(true);
       setErrorNotice(error, "Projekte konnten nicht geladen werden.");
       setSaveStatus("error");
     });
@@ -732,6 +746,13 @@ export default function StudioPage() {
   }, [customers, shareCustomerId, shareCustomerMode]);
 
   useEffect(() => {
+    const input = projectFolderInputRef.current;
+    if (!input) return;
+    input.setAttribute("webkitdirectory", "true");
+    input.setAttribute("directory", "true");
+  }, []);
+
+  useEffect(() => {
     if (!requestedProjectId || galleries.length === 0) return;
 
     const found = galleries.find((gallery) => gallery.id === requestedProjectId);
@@ -788,7 +809,7 @@ export default function StudioPage() {
       const json = await response.json();
 
       if (!response.ok) {
-        throw new Error(json?.error?.message ?? "Galerie konnte nicht erstellt werden");
+        throw new Error(json?.error?.code ?? json?.error?.message ?? "Galerie konnte nicht erstellt werden");
       }
 
       await loadGalleries();
@@ -1221,6 +1242,7 @@ export default function StudioPage() {
   async function reloadProjectContext() {
     setLoading(true);
     setNotice(null);
+    setGalleriesLoadFailed(false);
     try {
       await Promise.all([loadGalleries(), loadCustomers()]);
       if (selectedGalleryId) {
@@ -1229,6 +1251,8 @@ export default function StudioPage() {
       }
       setSaveStatus("idle");
     } catch (error) {
+      setGalleriesReady(true);
+      setGalleriesLoadFailed(true);
       setSaveStatus("error");
       setErrorNotice(error, "Das Projekt konnte nicht neu geladen werden.");
     } finally {
@@ -1241,6 +1265,71 @@ export default function StudioPage() {
     const saved = await persistSelectedFiles({ onlyFailed: true });
     if (saved) {
       setNotice(null);
+    }
+  }
+
+  async function handleProjectFolderChosen(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+
+    if (files.length === 0) return;
+
+    const firstPath = files[0].webkitRelativePath || files[0].name;
+    const folderName = firstPath.split("/")[0] || "Neues Projekt";
+
+    const manifestFile =
+      files.find((file) => file.name === "photopay-project.json") ||
+      files.find((file) => file.name === ".photopay-project.json");
+
+    if (!manifestFile) {
+      setGalleryTitle(folderName);
+      setEntryMode("new");
+      setNotice({
+        type: "muted",
+        text: "Ordner erkannt. Wir haben den Projektnamen übernommen. Bitte mit „Weiter“ das Projekt anlegen.",
+      });
+      return;
+    }
+
+    try {
+      const raw = await manifestFile.text();
+      const parsed = JSON.parse(raw) as { photographerId?: string; projectId?: string };
+      const nextPhotographerId = parsed.photographerId?.trim() ?? "";
+      const nextProjectId = parsed.projectId?.trim() ?? "";
+
+      if (!nextPhotographerId) {
+        setGalleryTitle(folderName);
+        setEntryMode("new");
+        setNotice({
+          type: "muted",
+          text: "Projektdatei gefunden, aber ohne Zuordnung. Wir haben den Projektnamen übernommen.",
+        });
+        return;
+      }
+
+      window.localStorage.setItem(photographerStorageKey, nextPhotographerId);
+      setPhotographerId(nextPhotographerId);
+      setGalleries([]);
+      setCustomers([]);
+      setSelectedGalleryId("");
+      setPackages([]);
+      setProjectAssets([]);
+      setRequestedProjectId(nextProjectId || null);
+      setEntryMode("open");
+      setActiveStep("create");
+      setGalleriesReady(false);
+      setGalleriesLoadFailed(false);
+      setNotice({
+        type: "muted",
+        text: "Projektordner geladen. Wir suchen jetzt die zugehörigen Projekte.",
+      });
+    } catch {
+      setGalleryTitle(folderName);
+      setEntryMode("new");
+      setNotice({
+        type: "muted",
+        text: "Der Ordner konnte nicht als bestehendes Projekt gelesen werden. Du kannst ihn als neues Projekt anlegen.",
+      });
     }
   }
 
@@ -1324,53 +1413,114 @@ export default function StudioPage() {
       {activeStep === "create" ? (
         <section className="card grid" style={{ gap: "0.75rem" }}>
           <h2 style={{ marginBottom: 0 }}>{entryMode === "open" ? "Schritt 1: Projekt öffnen" : "Schritt 1: Projekt anlegen"}</h2>
-          <p className="helper" style={{ marginBottom: 0 }}>
-            {entryMode === "open"
-              ? "Wähle ein bestehendes Projekt aus und fahre direkt mit den nächsten Schritten fort."
-              : "Gib deinem Projekt einen Namen, der dir sofort die Verbindung zum Shooting zeigt."}
-          </p>
+          {entryMode === "new" ? (
+            <p className="helper" style={{ marginBottom: 0 }}>
+              Gib deinem Projekt einen Namen, der dir sofort die Verbindung zum Shooting zeigt.
+            </p>
+          ) : null}
 
           {entryMode === "open" ? (
-            galleries.length > 0 ? (
-              <div className="grid" style={{ gap: "0.55rem" }}>
-                <h3 style={{ marginBottom: 0 }}>Bestehende Projekte</h3>
-                <div className="gallery-list">
-                  {galleries.map((gallery) => (
+            <div className="grid" style={{ gap: "0.75rem" }}>
+              <input
+                onChange={(event) => {
+                  void handleProjectFolderChosen(event);
+                }}
+                ref={projectFolderInputRef}
+                style={{ display: "none" }}
+                type="file"
+                multiple
+              />
+
+              {!galleriesReady ? (
+                <div className="notice notice-muted">Projekte werden geladen...</div>
+              ) : galleriesLoadFailed ? (
+                <div className="grid" style={{ gap: "0.55rem" }}>
+                  <div className="notice notice-error">
+                    Projekte konnten gerade nicht geladen werden. Bitte versuche es erneut.
+                  </div>
+                  <div className="toolbar">
+                    <button className="btn btn-secondary" disabled={loading} onClick={() => void reloadProjectContext()} type="button">
+                      Erneut laden
+                    </button>
                     <button
-                      className={`gallery-item ${selectedGalleryId === gallery.id ? "gallery-item-active" : ""}`}
+                      className="btn btn-secondary"
                       disabled={loading}
-                      key={gallery.id}
-                      onClick={() => setSelectedGalleryId(gallery.id)}
+                      onClick={() => projectFolderInputRef.current?.click()}
                       type="button"
                     >
-                      <div className="kv" style={{ alignItems: "flex-start" }}>
-                        <div className="grid" style={{ gap: "0.35rem" }}>
-                          <strong>{gallery.title}</strong>
-                          <div className="toolbar" style={{ gap: "0.4rem" }}>
-                            <span className={`status ${gallery.status === "published" ? "status-published" : "status-draft"}`}>
-                              {gallery.status === "published" ? "live" : "entwurf"}
-                            </span>
-                            <span className={`status ${toCustomerStatusClass(gallery.customerStatus)}`}>
-                              {toCustomerStatusLabel(gallery.customerStatus)}
-                            </span>
-                          </div>
-                          <p className="small muted" style={{ marginBottom: 0 }}>
-                            {gallery.customerName ? `${gallery.customerName} (${gallery.customerEmail ?? "ohne E-Mail"})` : "Kein Kunde zugeordnet"}
-                          </p>
-                        </div>
-                      </div>
+                      Ordner wählen
                     </button>
-                  ))}
+                    <button className="btn" disabled={loading} onClick={() => setEntryMode("new")} type="button">
+                      Neues Projekt anlegen
+                    </button>
+                  </div>
                 </div>
-                <div className="toolbar">
-                  <button className="btn btn-secondary" disabled={loading} onClick={() => setEntryMode("new")} type="button">
-                    Neues Projekt anlegen
-                  </button>
+              ) : galleries.length > 0 ? (
+                <div className="grid" style={{ gap: "0.55rem" }}>
+                  <div className="gallery-list">
+                    {galleries.map((gallery) => (
+                      <button
+                        className={`gallery-item ${selectedGalleryId === gallery.id ? "gallery-item-active" : ""}`}
+                        disabled={loading}
+                        key={gallery.id}
+                        onClick={() => setSelectedGalleryId(gallery.id)}
+                        type="button"
+                      >
+                        <div className="kv" style={{ alignItems: "flex-start" }}>
+                          <div className="grid" style={{ gap: "0.35rem" }}>
+                            <strong>{gallery.title}</strong>
+                            <div className="toolbar" style={{ gap: "0.4rem" }}>
+                              <span className={`status ${gallery.status === "published" ? "status-published" : "status-draft"}`}>
+                                {gallery.status === "published" ? "Freigabe live" : "Nicht freigegeben"}
+                              </span>
+                              <span className={`status ${toCustomerStatusClass(gallery.customerStatus)}`}>
+                                {toCustomerStatusLabel(gallery.customerStatus)}
+                              </span>
+                            </div>
+                            <p className="small muted" style={{ marginBottom: 0 }}>
+                              {gallery.customerName ? `${gallery.customerName} (${gallery.customerEmail ?? "ohne E-Mail"})` : "Kein Kunde zugeordnet"}
+                            </p>
+                            <p className="small muted" style={{ marginBottom: 0 }}>
+                              Erstellt: {formatDateTime(gallery.createdAt)}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="toolbar">
+                    <button
+                      className="btn btn-secondary"
+                      disabled={loading}
+                      onClick={() => projectFolderInputRef.current?.click()}
+                      type="button"
+                    >
+                      Ordner wählen
+                    </button>
+                    <button className="btn btn-secondary" disabled={loading} onClick={() => setEntryMode("new")} type="button">
+                      Neues Projekt anlegen
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="notice notice-muted">Es sind noch keine Projekte vorhanden. Lege zuerst ein Projekt an.</div>
-            )
+              ) : (
+                <div className="grid" style={{ gap: "0.55rem" }}>
+                  <div className="notice notice-muted">Es sind noch keine Projekte vorhanden. Lege zuerst ein Projekt an.</div>
+                  <div className="toolbar">
+                    <button
+                      className="btn btn-secondary"
+                      disabled={loading}
+                      onClick={() => projectFolderInputRef.current?.click()}
+                      type="button"
+                    >
+                      Ordner wählen
+                    </button>
+                    <button className="btn" disabled={loading} onClick={() => setEntryMode("new")} type="button">
+                      Neues Projekt anlegen
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           ) : (
             <>
               <form className="grid" onSubmit={handleCreateGallery} style={{ gap: "0.65rem" }}>

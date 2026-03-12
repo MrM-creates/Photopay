@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { readPhotographerId } from "@/lib/auth";
 import { upsertCustomerForPhotographer } from "@/lib/customers";
+import { isMissingSchemaObjectError } from "@/lib/db-errors";
 import { fail, ok } from "@/lib/http";
 import { toPublicSlug } from "@/lib/slug";
 import { createAdminClient } from "@/lib/supabase";
@@ -79,21 +80,21 @@ export async function GET(request: Request) {
     .eq("photographer_id", auth.photographerId)
     .order("created_at", { ascending: false });
 
-  if (queryAllColumns.error?.code === "42703") {
+  if (isMissingSchemaObjectError(queryAllColumns.error)) {
     const queryLifecycleOnly = await supabase
       .from("galleries")
       .select("id,title,description,public_slug,status,published_at,cover_asset_id,archive_after_days,never_auto_archive,created_at")
       .eq("photographer_id", auth.photographerId)
       .order("created_at", { ascending: false });
 
-    if (queryLifecycleOnly.error?.code === "42703") {
+    if (isMissingSchemaObjectError(queryLifecycleOnly.error)) {
       const queryCustomerOnly = await supabase
         .from("galleries")
         .select("id,title,description,public_slug,status,published_at,cover_asset_id,customer_id,created_at")
         .eq("photographer_id", auth.photographerId)
         .order("created_at", { ascending: false });
 
-      if (queryCustomerOnly.error?.code === "42703") {
+      if (isMissingSchemaObjectError(queryCustomerOnly.error)) {
         supportsLifecycleColumns = false;
         supportsCustomerColumns = false;
 
@@ -157,7 +158,7 @@ export async function GET(request: Request) {
         .in("id", customerIds)
         .eq("photographer_id", auth.photographerId);
 
-      if (customersQuery.error?.code === "42P01") {
+      if (isMissingSchemaObjectError(customersQuery.error)) {
         supportsCustomerColumns = false;
       } else if (customersQuery.error) {
         return fail("DB_ERROR", customersQuery.error.message, 500);
@@ -217,7 +218,7 @@ export async function GET(request: Request) {
         lastAccessAtByGallery.set(event.gallery_id, event.created_at);
       }
     }
-  } else if (accessEventsQuery.error.code !== "42P01") {
+  } else if (!isMissingSchemaObjectError(accessEventsQuery.error)) {
     return fail("DB_ERROR", accessEventsQuery.error.message, 500);
   }
 
@@ -227,7 +228,7 @@ export async function GET(request: Request) {
     .in("gallery_id", galleryIds)
     .eq("payment_status", "paid");
 
-  if (paidOrdersQuery.error?.code !== "42P01" && paidOrdersQuery.error) {
+  if (paidOrdersQuery.error && !isMissingSchemaObjectError(paidOrdersQuery.error)) {
     return fail("DB_ERROR", paidOrdersQuery.error.message, 500);
   }
 
@@ -241,7 +242,7 @@ export async function GET(request: Request) {
 
   if (paidOrderIds.length > 0) {
     const orderItemsQuery = await supabase.from("order_items").select("id,order_id").in("order_id", paidOrderIds);
-    if (orderItemsQuery.error?.code !== "42P01" && orderItemsQuery.error) {
+    if (orderItemsQuery.error && !isMissingSchemaObjectError(orderItemsQuery.error)) {
       return fail("DB_ERROR", orderItemsQuery.error.message, 500);
     }
 
@@ -261,7 +262,7 @@ export async function GET(request: Request) {
         .select("id,order_item_id")
         .in("order_item_id", orderItemIds);
 
-      if (orderItemAssetsQuery.error?.code !== "42P01" && orderItemAssetsQuery.error) {
+      if (orderItemAssetsQuery.error && !isMissingSchemaObjectError(orderItemAssetsQuery.error)) {
         return fail("DB_ERROR", orderItemAssetsQuery.error.message, 500);
       }
 
@@ -280,7 +281,7 @@ export async function GET(request: Request) {
           .select("order_item_asset_id,download_count")
           .in("order_item_asset_id", orderItemAssetsQuery.data.map((entry) => entry.id));
 
-        if (grantsQuery.error?.code !== "42P01" && grantsQuery.error) {
+        if (grantsQuery.error && !isMissingSchemaObjectError(grantsQuery.error)) {
           return fail("DB_ERROR", grantsQuery.error.message, 500);
         }
 
@@ -377,7 +378,7 @@ export async function POST(request: Request) {
         .eq("photographer_id", photographerId)
         .maybeSingle();
 
-      if (customer.error?.code === "42P01") {
+      if (isMissingSchemaObjectError(customer.error)) {
         return fail(
           "FEATURE_NOT_READY",
           "Customer assignment is not available yet. Please run migration 20260312_0003_customers_and_engagement.sql.",
@@ -410,13 +411,14 @@ export async function POST(request: Request) {
 
   const placeholderPassword = `draft-${crypto.randomUUID()}-${Date.now()}`;
   const accessPasswordHash = await hash(placeholderPassword, 12);
-  const publicSlug = toPublicSlug(parsed.data.title);
+  const normalizedTitle = parsed.data.title.trim();
+  const publicSlug = toPublicSlug(normalizedTitle);
 
   const insert = await supabase
     .from("galleries")
     .insert({
       photographer_id: photographerId,
-      title: parsed.data.title,
+      title: normalizedTitle,
       description: parsed.data.description ?? null,
       public_slug: publicSlug,
       access_password_hash: accessPasswordHash,
@@ -426,7 +428,7 @@ export async function POST(request: Request) {
     .select("id,public_slug,status,customer_id")
     .single();
 
-  if (insert.error?.code === "42703") {
+  if (isMissingSchemaObjectError(insert.error)) {
     if (customerId) {
       return fail(
         "FEATURE_NOT_READY",
@@ -439,7 +441,7 @@ export async function POST(request: Request) {
       .from("galleries")
       .insert({
         photographer_id: photographerId,
-        title: parsed.data.title,
+        title: normalizedTitle,
         description: parsed.data.description ?? null,
         public_slug: publicSlug,
         access_password_hash: accessPasswordHash,
@@ -447,6 +449,13 @@ export async function POST(request: Request) {
       })
       .select("id,public_slug,status")
       .single();
+
+    if (
+      fallbackInsert.error?.code === "23505" ||
+      fallbackInsert.error?.message?.includes("uq_galleries_photographer_title_normalized")
+    ) {
+      return fail("DUPLICATE_PROJECT_NAME", "Es gibt bereits ein Projekt mit diesem Namen. Bitte wähle einen anderen Namen.", 409);
+    }
 
     if (fallbackInsert.error) {
       return fail("DB_ERROR", fallbackInsert.error.message, 500);
@@ -461,6 +470,13 @@ export async function POST(request: Request) {
       },
       201,
     );
+  }
+
+  if (
+    insert.error?.code === "23505" ||
+    insert.error?.message?.includes("uq_galleries_photographer_title_normalized")
+  ) {
+    return fail("DUPLICATE_PROJECT_NAME", "Es gibt bereits ein Projekt mit diesem Namen. Bitte wähle einen anderen Namen.", 409);
   }
 
   if (insert.error) {

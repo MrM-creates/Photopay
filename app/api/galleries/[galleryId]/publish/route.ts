@@ -2,6 +2,7 @@ import { hash } from "bcryptjs";
 import { z } from "zod";
 
 import { ensureProjectContext, readPhotographerId } from "@/lib/auth";
+import { isMissingSchemaObjectError } from "@/lib/db-errors";
 import { fail, ok } from "@/lib/http";
 import { createAdminClient } from "@/lib/supabase";
 
@@ -44,7 +45,7 @@ export async function POST(request: Request, context: RouteContext) {
     .eq("photographer_id", auth.photographerId)
     .maybeSingle();
 
-  if (lifecycleGallery.error?.code === "42703") {
+  if (isMissingSchemaObjectError(lifecycleGallery.error)) {
     supportsLifecycleColumns = false;
     const fallbackGallery = await supabase
       .from("galleries")

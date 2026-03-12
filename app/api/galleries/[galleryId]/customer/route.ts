@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { ensureProjectContext, readPhotographerId } from "@/lib/auth";
 import { upsertCustomerForPhotographer } from "@/lib/customers";
+import { isMissingSchemaObjectError } from "@/lib/db-errors";
 import { fail, ok } from "@/lib/http";
 import { createAdminClient } from "@/lib/supabase";
 
@@ -37,7 +38,7 @@ async function loadOwnedGallery(
     .eq("photographer_id", photographerId)
     .maybeSingle();
 
-  if (query.error?.code === "42703") {
+  if (isMissingSchemaObjectError(query.error)) {
     return {
       featureReady: false as const,
       supabase,
@@ -89,7 +90,7 @@ export async function GET(request: Request, context: RouteContext) {
     .eq("photographer_id", auth.photographerId)
     .maybeSingle();
 
-  if (customer.error?.code === "42P01") {
+  if (isMissingSchemaObjectError(customer.error)) {
     return ok({ customer: null, featureReady: false });
   }
   if (customer.error) return fail("DB_ERROR", customer.error.message, 500);
