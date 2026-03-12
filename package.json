@@ -1,0 +1,62 @@
+{
+  "name": "photopay",
+  "version": "1.0.0",
+  "description": "Swiss-first photo delivery and sales platform MVP",
+  "author": "MrM Creates",
+  "main": "desktop/main.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "next dev",
+    "desktop:dev": "concurrently -k -n NEXT,ELECTRON -c cyan,green \"npm run dev\" \"npm run desktop:open\"",
+    "desktop:open": "wait-on http://127.0.0.1:3000 && electron desktop/main.mjs",
+    "desktop:start": "electron desktop/main.mjs",
+    "desktop:build:mac": "xattr -cr node_modules/electron/dist/Electron.app && electron-builder --mac dir --publish never",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.99.1",
+    "bcryptjs": "^3.0.3",
+    "next": "^16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "stripe": "^20.4.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.4.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "concurrently": "^9.2.1",
+    "electron": "^41.0.0",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.1.6",
+    "typescript": "^5.9.3",
+    "wait-on": "^9.0.4"
+  },
+  "private": true,
+  "build": {
+    "appId": "ch.photopay.desktop",
+    "productName": "PhotoPay",
+    "directories": {
+      "output": "release"
+    },
+    "asar": true,
+    "files": [
+      "desktop/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dir"
+      ],
+      "category": "public.app-category.photography",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    }
+  }
+}

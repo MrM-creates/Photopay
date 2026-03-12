@@ -1,0 +1,263 @@
+:root {
+  --ink: #10211a;
+  --muted: #55655f;
+  --sand: #f2efe7;
+  --paper: #fffdf9;
+  --line: #d4d0c4;
+  --accent: #0a7a63;
+  --accent-2: #0b4f8a;
+  --danger: #b52137;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  color: var(--ink);
+  background:
+    radial-gradient(1100px 500px at 5% -10%, #eef8f5 0%, transparent 45%),
+    radial-gradient(900px 400px at 100% 0%, #e9f2fb 0%, transparent 50%),
+    linear-gradient(180deg, #f8f6ef 0%, #efe9dd 100%);
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+main {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 2.5rem 1rem 3rem;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+p {
+  line-height: 1.45;
+}
+
+code,
+pre,
+.mono {
+  font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.02);
+  padding: 1rem;
+}
+
+.grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.grid-2 {
+  grid-template-columns: 1fr;
+}
+
+.grid-3 {
+  grid-template-columns: 1fr;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.input,
+.textarea,
+.select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.62rem 0.68rem;
+  background: #fff;
+  color: var(--ink);
+}
+
+.textarea {
+  min-height: 94px;
+  resize: vertical;
+}
+
+.label {
+  display: block;
+  font-size: 0.87rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.btn {
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  padding: 0.6rem 0.85rem;
+  font-weight: 600;
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.btn-secondary {
+  background: #fff;
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.btn-link {
+  background: transparent;
+  color: var(--accent-2);
+  border: none;
+  padding: 0;
+}
+
+.status {
+  border-radius: 999px;
+  padding: 0.23rem 0.6rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.status-published {
+  color: #0d6c2f;
+  border-color: #9ad1ab;
+  background: #eef9f1;
+}
+
+.status-draft {
+  color: #895b00;
+  border-color: #ddc99d;
+  background: #fff6e7;
+}
+
+.notice {
+  border-radius: 10px;
+  padding: 0.62rem 0.72rem;
+  font-size: 0.9rem;
+}
+
+.notice-error {
+  border: 1px solid #e8b2bc;
+  color: var(--danger);
+  background: #fff2f4;
+}
+
+.notice-success {
+  border: 1px solid #a7d7c8;
+  color: #106a43;
+  background: #edfbf4;
+}
+
+.notice-muted {
+  border: 1px solid #ccd7d3;
+  color: #2a4a41;
+  background: #eef6f3;
+}
+
+.kv {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.small {
+  font-size: 0.86rem;
+}
+
+.hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 0.8rem 0;
+}
+
+.asset-list {
+  display: grid;
+  gap: 0.38rem;
+  max-height: 230px;
+  overflow: auto;
+  padding-right: 0.25rem;
+}
+
+.asset-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid #e6e2d6;
+  border-radius: 8px;
+  padding: 0.35rem 0.5rem;
+  background: #fff;
+}
+
+.nav {
+  display: flex;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.nav a {
+  padding: 0.35rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.install-banner {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  z-index: 80;
+  border: 1px solid #b8d7cc;
+  border-radius: 12px;
+  background: #f3fbf8;
+  box-shadow: 0 8px 24px rgba(3, 24, 18, 0.12);
+  padding: 0.72rem;
+  display: grid;
+  gap: 0.6rem;
+  max-width: 300px;
+}
+
+.install-banner-actions {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+@media (min-width: 860px) {
+  .grid-2 {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .grid-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
