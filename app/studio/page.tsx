@@ -147,6 +147,9 @@ function toFriendlyError(error: unknown, fallback: string) {
   if (raw.includes("DUPLICATE_PROJECT_NAME")) {
     return "Dieser Projektname existiert bereits. Bitte wähle einen anderen Namen.";
   }
+  if (raw.includes("PROJECT_DELETE_BLOCKED")) {
+    return "Dieses Projekt kann nicht gelöscht werden, weil bereits Bestellungen oder Downloads dazu existieren.";
+  }
 
   if (lower.includes("failed to fetch") || lower.includes("network")) {
     return "Ich konnte den Server gerade nicht erreichen. Bitte versuche es in ein paar Sekunden erneut.";
@@ -271,6 +274,8 @@ export default function StudioPage() {
   const [includedCount, setIncludedCount] = useState("10");
   const [allowExtra, setAllowExtra] = useState(true);
   const [extraPrice, setExtraPrice] = useState("15");
+  const [openProjectsSearch, setOpenProjectsSearch] = useState("");
+  const [openProjectsSort, setOpenProjectsSort] = useState<"newest" | "oldest" | "name_asc" | "name_desc">("newest");
 
   const [loading, setLoading] = useState(false);
   const [galleriesReady, setGalleriesReady] = useState(false);
@@ -368,6 +373,27 @@ export default function StudioPage() {
     shareCustomerName,
     shareCustomerNote,
   ]);
+
+  const openStepGalleries = useMemo(() => {
+    const query = openProjectsSearch.trim().toLowerCase();
+
+    const filtered = query
+      ? galleries.filter((gallery) => {
+          const haystack = `${gallery.title} ${gallery.customerName ?? ""} ${gallery.customerEmail ?? ""}`.toLowerCase();
+          return haystack.includes(query);
+        })
+      : galleries;
+
+    return [...filtered].sort((a, b) => {
+      if (openProjectsSort === "name_asc") return a.title.localeCompare(b.title, "de-CH");
+      if (openProjectsSort === "name_desc") return b.title.localeCompare(a.title, "de-CH");
+
+      const aTs = new Date(a.createdAt).getTime();
+      const bTs = new Date(b.createdAt).getTime();
+      if (openProjectsSort === "oldest") return aTs - bTs;
+      return bTs - aTs;
+    });
+  }, [galleries, openProjectsSearch, openProjectsSort]);
 
   const showGlobalNavigation = !(activeStep === "create" && entryMode === "new");
 
@@ -822,6 +848,46 @@ export default function StudioPage() {
     } catch (error) {
       setSaveStatus("error");
       setErrorNotice(error, "Das Projekt konnte nicht erstellt werden. Bitte prüfe deine Eingaben.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDeleteSelectedGallery() {
+    if (!selectedGalleryId || !selectedGallery) {
+      setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
+      setSaveStatus("error");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Projekt wirklich löschen?\n\n${selectedGallery.title}\n\nDieser Schritt kann nicht rückgängig gemacht werden.`,
+    );
+    if (!confirmed) return;
+
+    setLoading(true);
+    setSaveStatus("saving");
+    setNotice(null);
+
+    try {
+      const response = await withPhotographerHeaders(`/api/galleries/${selectedGalleryId}`, {
+        method: "DELETE",
+      });
+      const json = await response.json();
+
+      if (!response.ok) {
+        throw new Error(json?.error?.code ?? json?.error?.message ?? "Projekt konnte nicht gelöscht werden");
+      }
+
+      await loadGalleries();
+      await loadCustomers();
+      setPackages([]);
+      setProjectAssets([]);
+      setSaveStatus("saved");
+      setNotice({ type: "muted", text: "Projekt wurde gelöscht." });
+    } catch (error) {
+      setSaveStatus("error");
+      setErrorNotice(error, "Das Projekt konnte nicht gelöscht werden.");
     } finally {
       setLoading(false);
     }
@@ -1457,8 +1523,43 @@ export default function StudioPage() {
                 </div>
               ) : galleries.length > 0 ? (
                 <div className="grid" style={{ gap: "0.55rem" }}>
+                  <div className="grid grid-2" style={{ gap: "0.45rem" }}>
+                    <div>
+                      <label className="label" htmlFor="open-projects-search">
+                        Suchen
+                      </label>
+                      <input
+                        className="input"
+                        id="open-projects-search"
+                        onChange={(event) => setOpenProjectsSearch(event.target.value)}
+                        placeholder="Projekt, Kunde oder E-Mail"
+                        value={openProjectsSearch}
+                      />
+                    </div>
+                    <div>
+                      <label className="label" htmlFor="open-projects-sort">
+                        Sortieren
+                      </label>
+                      <select
+                        className="select"
+                        id="open-projects-sort"
+                        onChange={(event) =>
+                          setOpenProjectsSort(
+                            event.target.value as "newest" | "oldest" | "name_asc" | "name_desc",
+                          )
+                        }
+                        value={openProjectsSort}
+                      >
+                        <option value="newest">Neueste zuerst</option>
+                        <option value="oldest">Älteste zuerst</option>
+                        <option value="name_asc">Name A-Z</option>
+                        <option value="name_desc">Name Z-A</option>
+                      </select>
+                    </div>
+                  </div>
+
                   <div className="gallery-list">
-                    {galleries.map((gallery) => (
+                    {openStepGalleries.map((gallery) => (
                       <button
                         className={`gallery-item ${selectedGalleryId === gallery.id ? "gallery-item-active" : ""}`}
                         disabled={loading}
@@ -1488,6 +1589,11 @@ export default function StudioPage() {
                       </button>
                     ))}
                   </div>
+                  {openStepGalleries.length === 0 ? (
+                    <div className="notice notice-muted">
+                      Keine Projekte für diesen Suchbegriff gefunden.
+                    </div>
+                  ) : null}
                   <div className="toolbar">
                     <button
                       className="btn btn-secondary"
@@ -1496,6 +1602,14 @@ export default function StudioPage() {
                       type="button"
                     >
                       Ordner wählen
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      disabled={loading || !selectedGalleryId}
+                      onClick={() => void handleDeleteSelectedGallery()}
+                      type="button"
+                    >
+                      Projekt löschen
                     </button>
                     <button className="btn btn-secondary" disabled={loading} onClick={() => setEntryMode("new")} type="button">
                       Neues Projekt anlegen
