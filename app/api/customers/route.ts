@@ -1,43 +1,88 @@
 import { z } from "zod";
 
 import { readPhotographerId } from "@/lib/auth";
-import { upsertCustomerForPhotographer } from "@/lib/customers";
+import { buildCustomerFullName, upsertCustomerForPhotographer } from "@/lib/customers";
 import { isMissingSchemaObjectError } from "@/lib/db-errors";
 import { fail, ok } from "@/lib/http";
 import { createAdminClient } from "@/lib/supabase";
 
-const createCustomerSchema = z.object({
-  fullName: z.string().trim().min(1).max(180),
+const createCustomerSchema = z
+  .object({
+  fullName: z.string().trim().min(1).max(180).optional(),
+  firstName: z.string().trim().min(1).max(120).optional(),
+  lastName: z.string().trim().max(120).optional(),
   email: z.string().trim().email().max(320),
   note: z.string().trim().max(1000).optional(),
-});
+})
+  .superRefine((value, ctx) => {
+    if (!value.fullName && !value.firstName) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["firstName"],
+        message: "Bitte mindestens Vorname oder Name angeben.",
+      });
+    }
+  });
 
 export const runtime = "nodejs";
+
+type CustomerResponseRow = {
+  id: string;
+  customer_number?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  full_name: string;
+  email: string;
+  note: string | null;
+  last_used_at: string | null;
+  created_at: string;
+};
 
 export async function GET(request: Request) {
   const auth = readPhotographerId(request.headers);
   if ("error" in auth) return auth.error;
 
   const supabase = createAdminClient();
-  const customers = await supabase
+  const customersExtended = await supabase
     .from("customers")
-    .select("id,full_name,email,note,last_used_at,created_at")
+    .select("id,customer_number,first_name,last_name,full_name,email,note,last_used_at,created_at")
     .eq("photographer_id", auth.photographerId)
     .order("last_used_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false });
 
-  if (isMissingSchemaObjectError(customers.error)) {
-    return ok({ customers: [] });
-  }
+  let rows: CustomerResponseRow[] = [];
+  if (isMissingSchemaObjectError(customersExtended.error)) {
+    const customersFallback = await supabase
+      .from("customers")
+      .select("id,full_name,email,note,last_used_at,created_at")
+      .eq("photographer_id", auth.photographerId)
+      .order("last_used_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false });
 
-  if (customers.error) {
-    return fail("DB_ERROR", customers.error.message, 500);
+    if (isMissingSchemaObjectError(customersFallback.error)) {
+      return ok({ customers: [] });
+    }
+    if (customersFallback.error) {
+      return fail("DB_ERROR", customersFallback.error.message, 500);
+    }
+    rows = customersFallback.data as CustomerResponseRow[];
+  } else if (customersExtended.error) {
+    return fail("DB_ERROR", customersExtended.error.message, 500);
+  } else {
+    rows = customersExtended.data as CustomerResponseRow[];
   }
 
   return ok({
-    customers: customers.data.map((customer) => ({
+    customers: rows.map((customer) => ({
       id: customer.id,
-      fullName: customer.full_name,
+      customerNumber: customer.customer_number ?? null,
+      firstName: customer.first_name ?? null,
+      lastName: customer.last_name ?? null,
+      fullName: buildCustomerFullName({
+        fullName: customer.full_name,
+        firstName: customer.first_name ?? null,
+        lastName: customer.last_name ?? null,
+      }),
       email: customer.email,
       note: customer.note,
       lastUsedAt: customer.last_used_at,
@@ -61,6 +106,8 @@ export async function POST(request: Request) {
 
   const upsert = await upsertCustomerForPhotographer(supabase, auth.photographerId, {
     fullName: parsed.data.fullName,
+    firstName: parsed.data.firstName,
+    lastName: parsed.data.lastName,
     email: parsed.data.email,
     note: parsed.data.note ?? null,
   });
@@ -80,6 +127,9 @@ export async function POST(request: Request) {
     {
       customer: {
         id: upsert.data.id,
+        customerNumber: upsert.data.customer_number ?? null,
+        firstName: upsert.data.first_name ?? null,
+        lastName: upsert.data.last_name ?? null,
         fullName: upsert.data.full_name,
         email: upsert.data.email,
         note: upsert.data.note,

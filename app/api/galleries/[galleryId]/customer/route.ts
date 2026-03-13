@@ -1,13 +1,24 @@
 import { z } from "zod";
 
 import { ensureProjectContext, readPhotographerId } from "@/lib/auth";
-import { upsertCustomerForPhotographer } from "@/lib/customers";
+import { buildCustomerFullName, upsertCustomerForPhotographer } from "@/lib/customers";
 import { isMissingSchemaObjectError } from "@/lib/db-errors";
 import { fail, ok } from "@/lib/http";
 import { createAdminClient } from "@/lib/supabase";
 
 type RouteContext = {
   params: Promise<{ galleryId: string }>;
+};
+
+type LoadedCustomer = {
+  id: string;
+  customer_number?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  full_name: string;
+  email: string;
+  note: string | null;
+  last_used_at: string | null;
 };
 
 const patchCustomerSchema = z.discriminatedUnion("mode", [
@@ -20,11 +31,47 @@ const patchCustomerSchema = z.discriminatedUnion("mode", [
   }),
   z.object({
     mode: z.literal("upsert"),
-    fullName: z.string().trim().min(1).max(180),
+    fullName: z.string().trim().min(1).max(180).optional(),
+    firstName: z.string().trim().min(1).max(120).optional(),
+    lastName: z.string().trim().max(120).optional(),
     email: z.string().trim().email().max(320),
     note: z.string().trim().max(1000).optional(),
+  }).superRefine((value, ctx) => {
+    if (!value.fullName && !value.firstName) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["firstName"],
+        message: "Bitte mindestens Vorname oder Name angeben.",
+      });
+    }
   }),
 ]);
+
+async function loadCustomerById(
+  supabase: ReturnType<typeof createAdminClient>,
+  customerId: string,
+  photographerId: string,
+) {
+  const extended = await supabase
+    .from("customers")
+    .select("id,customer_number,first_name,last_name,full_name,email,note,last_used_at")
+    .eq("id", customerId)
+    .eq("photographer_id", photographerId)
+    .maybeSingle<LoadedCustomer>();
+
+  if (isMissingSchemaObjectError(extended.error)) {
+    const fallback = await supabase
+      .from("customers")
+      .select("id,full_name,email,note,last_used_at")
+      .eq("id", customerId)
+      .eq("photographer_id", photographerId)
+      .maybeSingle<LoadedCustomer>();
+
+    return fallback;
+  }
+
+  return extended;
+}
 
 async function loadOwnedGallery(
   galleryId: string,
@@ -83,12 +130,7 @@ export async function GET(request: Request, context: RouteContext) {
     return ok({ customer: null, featureReady: true });
   }
 
-  const customer = await owned.supabase
-    .from("customers")
-    .select("id,full_name,email,note,last_used_at")
-    .eq("id", owned.gallery.customer_id)
-    .eq("photographer_id", auth.photographerId)
-    .maybeSingle();
+  const customer = await loadCustomerById(owned.supabase, owned.gallery.customer_id, auth.photographerId);
 
   if (isMissingSchemaObjectError(customer.error)) {
     return ok({ customer: null, featureReady: false });
@@ -100,7 +142,14 @@ export async function GET(request: Request, context: RouteContext) {
     featureReady: true,
     customer: {
       id: customer.data.id,
-      fullName: customer.data.full_name,
+      customerNumber: customer.data.customer_number ?? null,
+      firstName: customer.data.first_name ?? null,
+      lastName: customer.data.last_name ?? null,
+      fullName: buildCustomerFullName({
+        fullName: customer.data.full_name,
+        firstName: customer.data.first_name ?? null,
+        lastName: customer.data.last_name ?? null,
+      }),
       email: customer.data.email,
       note: customer.data.note,
       lastUsedAt: customer.data.last_used_at,
@@ -145,12 +194,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   if (parsed.data.mode === "select") {
-    const customer = await owned.supabase
-      .from("customers")
-      .select("id,full_name,email,note,last_used_at")
-      .eq("id", parsed.data.customerId)
-      .eq("photographer_id", auth.photographerId)
-      .maybeSingle();
+    const customer = await loadCustomerById(owned.supabase, parsed.data.customerId, auth.photographerId);
 
     if (customer.error) return fail("DB_ERROR", customer.error.message, 500);
     if (!customer.data) return fail("CUSTOMER_NOT_FOUND", "Customer not found", 404);
@@ -175,7 +219,14 @@ export async function PATCH(request: Request, context: RouteContext) {
       featureReady: true,
       customer: {
         id: customer.data.id,
-        fullName: customer.data.full_name,
+        customerNumber: customer.data.customer_number ?? null,
+        firstName: customer.data.first_name ?? null,
+        lastName: customer.data.last_name ?? null,
+        fullName: buildCustomerFullName({
+          fullName: customer.data.full_name,
+          firstName: customer.data.first_name ?? null,
+          lastName: customer.data.last_name ?? null,
+        }),
         email: customer.data.email,
         note: customer.data.note,
         lastUsedAt: new Date().toISOString(),
@@ -185,6 +236,8 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   const upsert = await upsertCustomerForPhotographer(owned.supabase, auth.photographerId, {
     fullName: parsed.data.fullName,
+    firstName: parsed.data.firstName,
+    lastName: parsed.data.lastName,
     email: parsed.data.email,
     note: parsed.data.note ?? null,
   });
@@ -205,6 +258,9 @@ export async function PATCH(request: Request, context: RouteContext) {
     featureReady: true,
     customer: {
       id: upsert.data.id,
+      customerNumber: upsert.data.customer_number ?? null,
+      firstName: upsert.data.first_name ?? null,
+      lastName: upsert.data.last_name ?? null,
       fullName: upsert.data.full_name,
       email: upsert.data.email,
       note: upsert.data.note,
