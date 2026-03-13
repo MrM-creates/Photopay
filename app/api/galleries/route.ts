@@ -41,6 +41,7 @@ type BaseGalleryRow = {
   never_auto_archive?: boolean | null;
   customer_id?: string | null;
   created_at: string;
+  updated_at?: string | null;
 };
 
 function isDuplicateProjectNameError(error: { code?: string; message?: string } | null | undefined) {
@@ -83,7 +84,7 @@ export async function GET(request: Request) {
   const queryAllColumns = await supabase
     .from("galleries")
     .select(
-      "id,title,description,public_slug,status,published_at,cover_asset_id,archive_after_days,never_auto_archive,customer_id,created_at",
+      "id,title,description,public_slug,status,published_at,cover_asset_id,archive_after_days,never_auto_archive,customer_id,created_at,updated_at",
     )
     .eq("photographer_id", auth.photographerId)
     .order("created_at", { ascending: false });
@@ -91,14 +92,14 @@ export async function GET(request: Request) {
   if (isMissingSchemaObjectError(queryAllColumns.error)) {
     const queryLifecycleOnly = await supabase
       .from("galleries")
-      .select("id,title,description,public_slug,status,published_at,cover_asset_id,archive_after_days,never_auto_archive,created_at")
+      .select("id,title,description,public_slug,status,published_at,cover_asset_id,archive_after_days,never_auto_archive,created_at,updated_at")
       .eq("photographer_id", auth.photographerId)
       .order("created_at", { ascending: false });
 
     if (isMissingSchemaObjectError(queryLifecycleOnly.error)) {
       const queryCustomerOnly = await supabase
         .from("galleries")
-        .select("id,title,description,public_slug,status,published_at,cover_asset_id,customer_id,created_at")
+        .select("id,title,description,public_slug,status,published_at,cover_asset_id,customer_id,created_at,updated_at")
         .eq("photographer_id", auth.photographerId)
         .order("created_at", { ascending: false });
 
@@ -108,7 +109,7 @@ export async function GET(request: Request) {
 
         const minimalQuery = await supabase
           .from("galleries")
-          .select("id,title,description,public_slug,status,published_at,cover_asset_id,created_at")
+          .select("id,title,description,public_slug,status,published_at,cover_asset_id,created_at,updated_at")
           .eq("photographer_id", auth.photographerId)
           .order("created_at", { ascending: false });
 
@@ -338,6 +339,7 @@ export async function GET(request: Request) {
         purchasedAssetCount,
         downloadedAssetCount,
         createdAt: row.created_at,
+        updatedAt: row.updated_at ?? row.created_at,
         packageCount: packageCountByGallery.get(row.id) ?? 0,
         assetCount: assetCountByGallery.get(row.id) ?? 0,
       };

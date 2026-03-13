@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { ensureProjectContext, readPhotographerId } from "@/lib/auth";
+import { isMissingSchemaObjectError } from "@/lib/db-errors";
 import { fail, ok } from "@/lib/http";
 import { getAssetsBucketName } from "@/lib/storage";
 import { createAdminClient } from "@/lib/supabase";
@@ -22,6 +23,18 @@ const patchSchema = z.discriminatedUnion("operation", [
   }),
 ]);
 
+function toLogicalAssetKey(input: {
+  filename: string;
+  mimeType?: string | null;
+  fileSizeBytes?: number | null;
+  width: number;
+  height: number;
+}) {
+  const mimePart = (input.mimeType ?? "unknown").trim().toLowerCase();
+  const sizePart = Number.isFinite(input.fileSizeBytes) ? String(input.fileSizeBytes) : "unknown";
+  return `${input.filename.trim().toLowerCase()}::${mimePart}::${sizePart}::${input.width}::${input.height}`;
+}
+
 async function ensureGalleryOwnership(galleryId: string, photographerId: string) {
   const supabase = createAdminClient();
   const gallery = await supabase
@@ -42,6 +55,41 @@ async function ensureGalleryOwnership(galleryId: string, photographerId: string)
   return { supabase, gallery: gallery.data } as const;
 }
 
+async function updateSortOrderRows(input: {
+  supabase: ReturnType<typeof createAdminClient>;
+  galleryId: string;
+  orderedAssetIds: string[];
+}) {
+  const { supabase, galleryId, orderedAssetIds } = input;
+
+  for (const [index, assetId] of orderedAssetIds.entries()) {
+    const update = await supabase
+      .from("gallery_assets")
+      .update({ sort_order: index })
+      .eq("id", assetId)
+      .eq("gallery_id", galleryId)
+      .eq("is_active", true);
+
+    if (update.error) {
+      return update.error;
+    }
+  }
+
+  return null;
+}
+
+async function touchGalleryUpdatedAt(input: {
+  supabase: ReturnType<typeof createAdminClient>;
+  galleryId: string;
+}) {
+  const update = await input.supabase
+    .from("galleries")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", input.galleryId);
+
+  return update.error;
+}
+
 export async function GET(request: Request, context: RouteContext) {
   const auth = readPhotographerId(request.headers);
   if ("error" in auth) return auth.error;
@@ -50,23 +98,107 @@ export async function GET(request: Request, context: RouteContext) {
   const owned = await ensureGalleryOwnership(galleryId, auth.photographerId);
   if ("error" in owned) return owned.error;
 
-  const assetsQuery = await owned.supabase
+  const fullAssetsQuery = await owned.supabase
     .from("gallery_assets")
-    .select("id,filename,width,height,storage_key_preview,watermark_applied,sort_order,is_active")
+    .select("id,filename,mime_type,file_size_bytes,width,height,storage_key_preview,watermark_applied,sort_order,is_active")
     .eq("gallery_id", galleryId)
     .eq("is_active", true)
-    .order("sort_order", { ascending: true });
+    .order("sort_order", { ascending: true })
+    .order("created_at", { ascending: true });
 
-  if (assetsQuery.error) {
-    return fail("DB_ERROR", assetsQuery.error.message, 500);
+  let assetsData: Array<{
+    id: string;
+    filename: string;
+    width: number;
+    height: number;
+    storage_key_preview: string;
+    watermark_applied: boolean;
+    sort_order: number;
+    mime_type?: string | null;
+    file_size_bytes?: number | null;
+  }> = [];
+
+  if (fullAssetsQuery.error && isMissingSchemaObjectError(fullAssetsQuery.error)) {
+    const fallbackAssetsQuery = await owned.supabase
+      .from("gallery_assets")
+      .select("id,filename,width,height,storage_key_preview,watermark_applied,sort_order,is_active")
+      .eq("gallery_id", galleryId)
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .order("created_at", { ascending: true });
+
+    if (fallbackAssetsQuery.error) {
+      return fail("DB_ERROR", fallbackAssetsQuery.error.message, 500);
+    }
+    assetsData = fallbackAssetsQuery.data;
+  } else if (fullAssetsQuery.error) {
+    return fail("DB_ERROR", fullAssetsQuery.error.message, 500);
+  } else {
+    assetsData = fullAssetsQuery.data;
   }
 
-  const activeAssetIds = new Set(assetsQuery.data.map((asset) => asset.id));
-  const coverNeedsReset = Boolean(owned.gallery.cover_asset_id && !activeAssetIds.has(owned.gallery.cover_asset_id));
+  const duplicateAssetIds: string[] = [];
+  const duplicateReplacementById = new Map<string, string>();
+  const canonicalByLogicalKey = new Map<string, (typeof assetsData)[number]>();
+
+  for (const asset of assetsData) {
+    const logicalKey = toLogicalAssetKey({
+      filename: asset.filename,
+      mimeType: asset.mime_type,
+      fileSizeBytes: asset.file_size_bytes,
+      width: asset.width,
+      height: asset.height,
+    });
+    const existingCanonical = canonicalByLogicalKey.get(logicalKey);
+    if (!existingCanonical) {
+      canonicalByLogicalKey.set(logicalKey, asset);
+      continue;
+    }
+    duplicateAssetIds.push(asset.id);
+    duplicateReplacementById.set(asset.id, existingCanonical.id);
+  }
+
+  if (duplicateAssetIds.length > 0) {
+    const markDuplicatesInactive = await owned.supabase
+      .from("gallery_assets")
+      .update({ is_active: false })
+      .eq("gallery_id", galleryId)
+      .in("id", duplicateAssetIds);
+
+    if (markDuplicatesInactive.error) {
+      return fail("DB_ERROR", markDuplicatesInactive.error.message, 500);
+    }
+  }
+
+  const duplicateAssetIdSet = new Set(duplicateAssetIds);
+  const normalizedAssets = assetsData.filter((asset) => !duplicateAssetIdSet.has(asset.id));
+  const activeAssetIds = new Set(normalizedAssets.map((asset) => asset.id));
+
+  let nextCoverAssetId = owned.gallery.cover_asset_id;
+  if (nextCoverAssetId && duplicateReplacementById.has(nextCoverAssetId)) {
+    nextCoverAssetId = duplicateReplacementById.get(nextCoverAssetId) ?? null;
+  }
+  if (nextCoverAssetId && !activeAssetIds.has(nextCoverAssetId)) {
+    nextCoverAssetId = null;
+  }
+
+  const coverNeedsReset = owned.gallery.cover_asset_id !== nextCoverAssetId;
   if (coverNeedsReset) {
-    const clearCover = await owned.supabase.from("galleries").update({ cover_asset_id: null }).eq("id", galleryId);
-    if (clearCover.error) {
-      return fail("DB_ERROR", clearCover.error.message, 500);
+    const updateCover = await owned.supabase.from("galleries").update({ cover_asset_id: nextCoverAssetId }).eq("id", galleryId);
+    if (updateCover.error) {
+      return fail("DB_ERROR", updateCover.error.message, 500);
+    }
+  }
+
+  const orderNeedsNormalization = normalizedAssets.some((asset, index) => asset.sort_order !== index);
+  if (orderNeedsNormalization && normalizedAssets.length > 0) {
+    const reorderError = await updateSortOrderRows({
+      supabase: owned.supabase,
+      galleryId,
+      orderedAssetIds: normalizedAssets.map((asset) => asset.id),
+    });
+    if (reorderError) {
+      return fail("DB_ERROR", reorderError.message, 500);
     }
   }
 
@@ -74,7 +206,7 @@ export async function GET(request: Request, context: RouteContext) {
   const previewUrlByKey = new Map<string, string | null>();
 
   await Promise.all(
-    assetsQuery.data.map(async (asset) => {
+    normalizedAssets.map(async (asset) => {
       const signed = await owned.supabase.storage.from(bucketName).createSignedUrl(asset.storage_key_preview, 60 * 60);
       previewUrlByKey.set(asset.storage_key_preview, signed.error ? null : signed.data.signedUrl);
     }),
@@ -83,8 +215,10 @@ export async function GET(request: Request, context: RouteContext) {
   return ok({
     normalized: {
       coverReset: coverNeedsReset,
+      duplicatesRemoved: duplicateAssetIds.length,
+      orderNormalized: orderNeedsNormalization,
     },
-    assets: assetsQuery.data.map((asset) => ({
+    assets: normalizedAssets.map((asset, index) => ({
       id: asset.id,
       filename: asset.filename,
       width: asset.width,
@@ -92,7 +226,7 @@ export async function GET(request: Request, context: RouteContext) {
       previewKey: asset.storage_key_preview,
       previewUrl: previewUrlByKey.get(asset.storage_key_preview) ?? null,
       watermark: asset.watermark_applied,
-      sortOrder: asset.sort_order,
+      sortOrder: index,
     })),
   });
 }
@@ -137,6 +271,11 @@ export async function PATCH(request: Request, context: RouteContext) {
       return fail("DB_ERROR", update.error.message, 500);
     }
 
+    const touchError = await touchGalleryUpdatedAt({ supabase: owned.supabase, galleryId });
+    if (touchError) {
+      return fail("DB_ERROR", touchError.message, 500);
+    }
+
     return ok({ updated: true, projectId: galleryId });
   }
 
@@ -159,17 +298,18 @@ export async function PATCH(request: Request, context: RouteContext) {
     return fail("VALIDATION_ERROR", "orderedAssetIds contains invalid asset IDs", 422);
   }
 
-  const reorderRows = parsed.data.orderedAssetIds.map((assetId, index) => ({
-    id: assetId,
-    gallery_id: galleryId,
-    sort_order: index,
-  }));
-
-  const reorder = await owned.supabase.from("gallery_assets").upsert(reorderRows, {
-    onConflict: "id",
+  const reorderError = await updateSortOrderRows({
+    supabase: owned.supabase,
+    galleryId,
+    orderedAssetIds: parsed.data.orderedAssetIds,
   });
-  if (reorder.error) {
-    return fail("DB_ERROR", reorder.error.message, 500);
+  if (reorderError) {
+    return fail("DB_ERROR", reorderError.message, 500);
+  }
+
+  const touchError = await touchGalleryUpdatedAt({ supabase: owned.supabase, galleryId });
+  if (touchError) {
+    return fail("DB_ERROR", touchError.message, 500);
   }
 
   return ok({ updated: true, projectId: galleryId });

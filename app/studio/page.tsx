@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent, DragEvent, FormEvent } from "react";
+import type { ChangeEvent, DragEvent, FormEvent, MouseEvent as ReactMouseEvent } from "react";
 
 type Gallery = {
   id: string;
@@ -24,6 +24,7 @@ type Gallery = {
   purchasedAssetCount?: number;
   downloadedAssetCount?: number;
   createdAt: string;
+  updatedAt?: string | null;
   packageCount: number;
   assetCount: number;
 };
@@ -102,6 +103,16 @@ function formatDateTime(input: string | null | undefined) {
   }).format(value);
 }
 
+function formatProjectSavedAt(input: string | null | undefined) {
+  if (!input) return "Unbekannt";
+  const value = new Date(input);
+  if (Number.isNaN(value.getTime())) return "Unbekannt";
+  return new Intl.DateTimeFormat("de-CH", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(value);
+}
+
 function toCustomerStatusLabel(status: Gallery["customerStatus"]) {
   if (status === "completed") return "Abgeschlossen";
   if (status === "downloads") return "Downloads laufen";
@@ -164,6 +175,10 @@ function toFriendlyError(error: unknown, fallback: string) {
 
   if (raw.includes("VALIDATION_ERROR")) {
     return "Bitte prüfe deine Eingaben. Ein Feld ist noch unvollständig.";
+  }
+
+  if (raw.includes("Photographer ID fehlt")) {
+    return "Die App-Verbindung wird gerade initialisiert. Bitte Seite kurz neu laden.";
   }
 
   if (raw.includes("FEATURE_NOT_READY")) {
@@ -296,7 +311,6 @@ export default function StudioPage() {
 
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [failedUploadKeys, setFailedUploadKeys] = useState<string[]>([]);
-  const [dragSelectedFileKey, setDragSelectedFileKey] = useState<string | null>(null);
   const [isDragOverAssets, setIsDragOverAssets] = useState(false);
 
   const [packageName, setPackageName] = useState("10er Paket Digital");
@@ -352,6 +366,13 @@ export default function StudioPage() {
     if (saveStatus === "error") return "Speichern fehlgeschlagen. Bitte versuche es erneut.";
     return "";
   }, [saveStatus]);
+  const isSavingAssets = activeStep === "assets" && saveStatus === "saving";
+
+  const blockNavigationDuringAssetSave = useCallback((event: ReactMouseEvent<HTMLAnchorElement>) => {
+    if (!isSavingAssets) return;
+    event.preventDefault();
+    setNotice({ type: "muted", text: "Bitte warte einen Moment, bis die Bilder in der Galerie sind." });
+  }, [isSavingAssets]);
 
   useEffect(() => {
     if (saveStatus !== "saved") return;
@@ -363,6 +384,19 @@ export default function StudioPage() {
       window.clearTimeout(timer);
     };
   }, [saveStatus]);
+
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!isSavingAssets) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [isSavingAssets]);
 
   const canGoNext = useMemo(() => {
     if (activeStep === "create") return progress.hasGallery;
@@ -481,42 +515,32 @@ export default function StudioPage() {
   }
 
   function appendFiles(filesToAppend: File[]) {
-    setSelectedFiles((previous) => {
-      const existing = new Set(previous.map((file) => fileFingerprint(file)));
-      const next = [...previous];
+    const existing = new Set(selectedFiles.map((file) => fileFingerprint(file)));
+    const next = [...selectedFiles];
+    const added: File[] = [];
 
-      for (const file of filesToAppend) {
-        const key = fileFingerprint(file);
-        if (existing.has(key)) continue;
-        existing.add(key);
-        next.push(file);
-      }
+    for (const file of filesToAppend) {
+      const key = fileFingerprint(file);
+      if (existing.has(key)) continue;
+      existing.add(key);
+      next.push(file);
+      added.push(file);
+    }
 
-      return next;
-    });
-  }
+    if (added.length > 0) {
+      setSelectedFiles(next);
+    }
 
-  function reorderSelectedFilesByDrag(targetFileKey: string) {
-    if (!dragSelectedFileKey || dragSelectedFileKey === targetFileKey) return;
-
-    setSelectedFiles((previous) => {
-      const fromIndex = previous.findIndex((file) => fileFingerprint(file) === dragSelectedFileKey);
-      const toIndex = previous.findIndex((file) => fileFingerprint(file) === targetFileKey);
-      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return previous;
-
-      const next = [...previous];
-      const [moved] = next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, moved);
-      return next;
-    });
-
-    setDragSelectedFileKey(null);
+    return added;
   }
 
   function handleAssetFileInput(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
-    appendFiles(files);
+    const added = appendFiles(files);
+    if (added.length > 0) {
+      void persistSelectedFiles({ files: added });
+    }
     event.target.value = "";
   }
 
@@ -525,58 +549,57 @@ export default function StudioPage() {
     setIsDragOverAssets(false);
     const files = Array.from(event.dataTransfer.files ?? []);
     if (files.length === 0) return;
-    appendFiles(files);
-  }
-
-  function removeSelectedFile(index: number) {
-    setSelectedFiles((previous) => {
-      const removed = previous[index];
-      if (removed) {
-        const removedKey = fileFingerprint(removed);
-        setFailedUploadKeys((existing) => existing.filter((key) => key !== removedKey));
-      }
-      return previous.filter((_, currentIndex) => currentIndex !== index);
-    });
-  }
-
-  function formatFileSize(sizeInBytes: number) {
-    if (sizeInBytes < 1024) return `${sizeInBytes} B`;
-    if (sizeInBytes < 1024 * 1024) return `${Math.round(sizeInBytes / 1024)} KB`;
-    return `${(sizeInBytes / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  const selectedFilePreviews = useMemo(
-    () =>
-      selectedFiles.map((file) => ({
-        file,
-        previewUrl: URL.createObjectURL(file),
-        key: fileFingerprint(file),
-      })),
-    [selectedFiles],
-  );
-
-  useEffect(() => {
-    return () => {
-      for (const preview of selectedFilePreviews) {
-        URL.revokeObjectURL(preview.previewUrl);
-      }
-    };
-  }, [selectedFilePreviews]);
-
-  useEffect(() => {
-    const stored = window.localStorage.getItem(photographerStorageKey);
-    if (stored && isUuidLike(stored)) {
-      setPhotographerId(stored);
-    } else {
-      const generated = createClientUuid();
-      window.localStorage.setItem(photographerStorageKey, generated);
-      setPhotographerId(generated);
+    const added = appendFiles(files);
+    if (added.length > 0) {
+      void persistSelectedFiles({ files: added });
     }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
 
     const params = new URLSearchParams(window.location.search);
     const stepParam = params.get("step");
     const projectParam = params.get("project");
     const modeParam = params.get("mode");
+    const profileParam = params.get("profile");
+
+    const stored = window.localStorage.getItem(photographerStorageKey);
+    const storedIsValid = Boolean(stored && isUuidLike(stored));
+    const profileFromUrl = profileParam && isUuidLike(profileParam) ? profileParam : null;
+
+    const bootstrapPhotographerId = async () => {
+      if (profileFromUrl) {
+        window.localStorage.setItem(photographerStorageKey, profileFromUrl);
+        if (!cancelled) setPhotographerId(profileFromUrl);
+        return;
+      }
+
+      try {
+        const response = await fetch("/api/photographers/default", { method: "GET" });
+        const json = await response.json().catch(() => null);
+        const resolved = typeof json?.photographerId === "string" ? json.photographerId : "";
+
+        if (response.ok && isUuidLike(resolved)) {
+          window.localStorage.setItem(photographerStorageKey, resolved);
+          if (!cancelled) setPhotographerId(resolved);
+          return;
+        }
+      } catch {
+        // Fallback handled below.
+      }
+
+      if (storedIsValid && stored) {
+        if (!cancelled) setPhotographerId(stored);
+        return;
+      }
+
+      const generated = createClientUuid();
+      window.localStorage.setItem(photographerStorageKey, generated);
+      if (!cancelled) setPhotographerId(generated);
+    };
+
+    void bootstrapPhotographerId();
 
     if (modeParam === "open") {
       setEntryMode("open");
@@ -591,15 +614,23 @@ export default function StudioPage() {
     if (projectParam) {
       setRequestedProjectId(projectParam);
     }
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const withPhotographerHeaders = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
       let effectivePhotographerId = photographerId;
       if (!effectivePhotographerId || !isUuidLike(effectivePhotographerId)) {
-        effectivePhotographerId = createClientUuid();
-        window.localStorage.setItem(photographerStorageKey, effectivePhotographerId);
-        setPhotographerId(effectivePhotographerId);
+        const fallbackStored = window.localStorage.getItem(photographerStorageKey);
+        if (fallbackStored && isUuidLike(fallbackStored)) {
+          effectivePhotographerId = fallbackStored;
+          setPhotographerId(fallbackStored);
+        } else {
+          throw new Error("Photographer ID fehlt");
+        }
       }
 
       const headers = new Headers(init?.headers);
@@ -762,9 +793,18 @@ export default function StudioPage() {
   }, [selectedGalleryId, photographerId, loadPackages, loadProjectAssets, setErrorNotice]);
 
   useEffect(() => {
+    if (!photographerId) return;
+    if (activeStep !== "create" || entryMode !== "open") return;
+
+    void loadGalleries().catch((error) => {
+      setGalleriesLoadFailed(true);
+      setErrorNotice(error, "Projekte konnten nicht geladen werden.");
+    });
+  }, [activeStep, entryMode, photographerId, loadGalleries, setErrorNotice]);
+
+  useEffect(() => {
     setSelectedFiles([]);
     setFailedUploadKeys([]);
-    setDragSelectedFileKey(null);
     setGalleryPassword("");
     setSaveStatus("idle");
   }, [selectedGalleryId]);
@@ -962,7 +1002,7 @@ export default function StudioPage() {
     });
   }
 
-  async function persistSelectedFiles(options?: { onlyFailed?: boolean }) {
+  async function persistSelectedFiles(options?: { onlyFailed?: boolean; files?: File[] }) {
     if (!selectedGalleryId) {
       setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
       setSaveStatus("error");
@@ -970,9 +1010,13 @@ export default function StudioPage() {
     }
 
     const onlyFailed = options?.onlyFailed === true;
-    const filesSnapshot = onlyFailed
-      ? selectedFiles.filter((file) => failedUploadKeySet.has(fileFingerprint(file)))
-      : [...selectedFiles];
+    const directFiles = options?.files;
+    const filesSnapshot =
+      directFiles && directFiles.length > 0
+        ? [...directFiles]
+        : onlyFailed
+          ? selectedFiles.filter((file) => failedUploadKeySet.has(fileFingerprint(file)))
+          : [...selectedFiles];
 
     if (filesSnapshot.length === 0) {
       setNotice({ type: "error", text: "Bitte wähle mindestens ein Bild aus." });
@@ -1186,6 +1230,10 @@ export default function StudioPage() {
 
   async function handleSeedAssets(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (selectedFiles.length === 0 && progress.hasAssets) {
+      setActiveStep("packages");
+      return;
+    }
     const saved = await persistSelectedFiles();
     if (saved) {
       setActiveStep("packages");
@@ -1475,15 +1523,15 @@ export default function StudioPage() {
     <main className="studio-shell">
       <header className="studio-top">
         <div className="studio-top-brand">
-          <Link className="studio-brand-link" href="/">
-            PhotoPay Studio
+          <Link className="studio-brand-link" href="/" onClick={blockNavigationDuringAssetSave}>
+            PhotoPay
           </Link>
           <p className="studio-top-project">
             Projekt: <strong>{currentProjectLabel}</strong>
           </p>
         </div>
         <nav aria-label="Schritte" className="wizard-nav">
-          <Link className="wizard-step wizard-step-open wizard-step-link" href="/">
+          <Link className="wizard-step wizard-step-open wizard-step-link" href="/" onClick={blockNavigationDuringAssetSave}>
             <span className="wizard-step-label">Start</span>
           </Link>
           {wizardSteps.map((step) => {
@@ -1513,7 +1561,7 @@ export default function StudioPage() {
               </button>
             );
           })}
-          <Link className="wizard-step wizard-step-open wizard-step-link" href="/settings">
+          <Link className="wizard-step wizard-step-open wizard-step-link" href="/settings" onClick={blockNavigationDuringAssetSave}>
             <span className="wizard-step-label">
               <span aria-hidden="true" className="wizard-step-gear">
                 &#9881;
@@ -1668,7 +1716,13 @@ export default function StudioPage() {
                               {gallery.customerName ? `${gallery.customerName} (${gallery.customerEmail ?? "ohne E-Mail"})` : "Kein Kunde zugeordnet"}
                             </p>
                             <p className="small muted" style={{ marginBottom: 0 }}>
-                              Erstellt: {formatDateTime(gallery.createdAt)}
+                              Bilder in Galerie: {gallery.assetCount}
+                            </p>
+                            <p className="small muted" style={{ marginBottom: 0 }}>
+                              Pakete: {gallery.packageCount}
+                            </p>
+                            <p className="small muted" style={{ marginBottom: 0 }}>
+                              Zuletzt gespeichert: {formatProjectSavedAt(gallery.updatedAt ?? gallery.createdAt)}
                             </p>
                           </div>
                         </div>
@@ -1871,9 +1925,6 @@ export default function StudioPage() {
       {activeStep === "assets" ? (
         <section className="card grid" style={{ gap: "0.75rem" }}>
           <h2 style={{ marginBottom: 0 }}>Schritt 2: Bilder hinzufügen</h2>
-          <p className="helper" style={{ marginBottom: 0 }}>
-            Füge die gewünschten Bilder im aktiven Projekt hinzu.
-          </p>
 
           {!progress.hasGallery ? (
             <div className="notice notice-error">Bitte zuerst in Schritt 1 ein Projekt anlegen.</div>
@@ -1927,67 +1978,70 @@ export default function StudioPage() {
                   </div>
                 </div>
 
-                {selectedFiles.length > 0 ? (
-                  <>
-                    <p className="small muted" style={{ marginBottom: 0 }}>
-                      Tipp: Du kannst die ausgewählten Bilder per Drag-and-Drop umsortieren.
-                    </p>
-                    {failedUploadKeys.length > 0 ? (
-                      <div className="toolbar" style={{ justifyContent: "flex-start" }}>
-                        <button className="btn btn-secondary" disabled={loading} onClick={() => void handleRetryFailedUploads()} type="button">
-                          Nur fehlgeschlagene erneut hochladen
-                        </button>
-                      </div>
-                    ) : null}
-                    <div className="selected-files">
-                      {selectedFilePreviews.map((preview, index) => (
-                        <div
-                          className={`selected-file-row ${dragSelectedFileKey === preview.key ? "selected-file-row-dragging" : ""} ${failedUploadKeySet.has(preview.key) ? "selected-file-row-failed" : ""}`}
-                          draggable
-                          key={preview.key}
-                          onDragEnd={() => setDragSelectedFileKey(null)}
-                          onDragOver={(event) => {
-                            event.preventDefault();
-                          }}
-                          onDragStart={() => setDragSelectedFileKey(preview.key)}
-                          onDrop={(event) => {
-                            event.preventDefault();
-                            reorderSelectedFilesByDrag(preview.key);
-                          }}
-                        >
-                        <div className="selected-file-preview-wrap">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            alt={preview.file.name}
-                            className="selected-file-preview"
-                            src={preview.previewUrl}
-                          />
-                        </div>
-                        <div className="selected-file-main">
-                          <div className="selected-file-meta">
-                            <span className="small selected-file-name">{preview.file.name}</span>
-                            {failedUploadKeySet.has(preview.key) ? <span className="selected-file-badge">Upload fehlgeschlagen</span> : null}
-                            <span className="small muted">{formatFileSize(preview.file.size)}</span>
-                          </div>
-                        </div>
-                        <div className="selected-file-actions">
-                          <button className="btn btn-secondary" disabled={loading} onClick={() => removeSelectedFile(index)} type="button">
-                            Entfernen
-                          </button>
-                        </div>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="small muted" style={{ marginBottom: 0 }}>
-                      Ausgewählt: {selectedFiles.length} {selectedFiles.length === 1 ? "Bild" : "Bilder"}.
-                    </p>
-                  </>
-                ) : (
+                {saveStatus === "saving" ? (
+                  <p className="small muted" style={{ marginBottom: 0 }}>
+                    Bilder werden geladen ...
+                  </p>
+                ) : projectAssets.length === 0 ? (
                   <p className="small muted" style={{ marginBottom: 0 }}>
                     Noch keine Bilder ausgewählt.
                   </p>
-                )}
+                ) : null}
+                {failedUploadKeys.length > 0 ? (
+                  <div className="toolbar" style={{ justifyContent: "flex-start" }}>
+                    <button className="btn btn-secondary" disabled={loading} onClick={() => void handleRetryFailedUploads()} type="button">
+                      Fehlgeschlagene Bilder erneut hochladen
+                    </button>
+                  </div>
+                ) : null}
               </form>
+              {projectAssets.length > 0 ? (
+                <div className="grid" style={{ gap: "0.5rem" }}>
+                  <p className="small muted" style={{ marginBottom: 0 }}>
+                    Bilder in der Galerie: {projectAssets.length}
+                  </p>
+                  <div className="project-assets-grid">
+                    {projectAssets.map((asset) => (
+                      <article
+                        className={`project-asset-card ${dragAssetId === asset.id ? "project-asset-card-dragging" : ""}`}
+                        draggable
+                        key={asset.id}
+                        onDragEnd={() => setDragAssetId(null)}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                        }}
+                        onDragStart={() => setDragAssetId(asset.id)}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          void reorderAssetsByDrag(asset.id);
+                        }}
+                      >
+                        <div className="project-asset-preview-wrap">
+                          {asset.previewUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img alt={asset.filename} className="project-asset-preview" src={asset.previewUrl} />
+                          ) : (
+                            <div className="project-asset-placeholder small muted">Kein Preview</div>
+                          )}
+                        </div>
+                        <p className="small project-asset-name">{asset.filename}</p>
+                        <div className="project-asset-actions">
+                          <button
+                            className="btn btn-secondary"
+                            disabled={loading}
+                            onClick={() => {
+                              void deleteAsset(asset.id);
+                            }}
+                            type="button"
+                          >
+                            Entfernen
+                          </button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
 
             </>
           )}

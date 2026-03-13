@@ -61,5 +61,15 @@ export async function DELETE(request: Request, context: RouteContext) {
     }
   }
 
+  const touchGallery = await supabase
+    .from("galleries")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", galleryId)
+    .eq("photographer_id", auth.photographerId);
+
+  if (touchGallery.error) {
+    return fail("DB_ERROR", touchGallery.error.message, 500);
+  }
+
   return ok({ deleted: true, projectId: galleryId });
 }
