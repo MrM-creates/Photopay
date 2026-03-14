@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent, FormEvent, MouseEvent as ReactMouseEvent } from "react";
+import UiIcon from "@/app/components/UiIcon";
+import AdminDropdown from "@/app/components/AdminDropdown";
 
 type Gallery = {
   id: string;
@@ -88,6 +90,15 @@ const wizardSteps: Array<{ id: WizardStepId; title: string; short: string }> = [
   { id: "share", title: "Schritt 4: Galerie & Freigabe", short: "Galerie & Freigabe" },
   { id: "summary", title: "Übersicht", short: "Übersicht" },
 ];
+const wizardMainFlow: WizardStepId[] = ["create", "assets", "share", "summary"];
+
+function iconForStep(stepId: WizardStepId) {
+  if (stepId === "create") return "project";
+  if (stepId === "assets") return "images";
+  if (stepId === "share") return "gallery";
+  if (stepId === "summary") return "summary";
+  return "packages";
+}
 
 function formatChf(cents: number) {
   return new Intl.NumberFormat("de-CH", { style: "currency", currency: "CHF" }).format(cents / 100);
@@ -125,6 +136,13 @@ function toCustomerStatusClass(status: Gallery["customerStatus"]) {
   if (status === "downloads") return "status-open";
   if (status === "active") return "status-active";
   return "status-draft";
+}
+
+function toProjectFlowStatus(gallery: Gallery) {
+  if (gallery.customerStatus === "completed") {
+    return { label: "Abgeschlossen", className: "status-published" };
+  }
+  return { label: "Läuft", className: "status-active" };
 }
 
 function createClientUuid() {
@@ -234,19 +252,21 @@ function nextIncompleteStep(input: {
 }): WizardStepId {
   if (!input.hasGallery) return "create";
   if (!input.hasAssets) return "assets";
-  if (!input.hasPackages) return "packages";
+  if (!input.hasPackages) return "share";
   if (!input.isPublished) return "share";
   return "summary";
 }
 
 function previousStep(current: WizardStepId): WizardStepId {
-  const index = wizardSteps.findIndex((step) => step.id === current);
-  return wizardSteps[Math.max(0, index - 1)].id;
+  const safeCurrent = wizardMainFlow.includes(current) ? current : "create";
+  const index = wizardMainFlow.findIndex((step) => step === safeCurrent);
+  return wizardMainFlow[Math.max(0, index - 1)];
 }
 
 function nextStep(current: WizardStepId): WizardStepId {
-  const index = wizardSteps.findIndex((step) => step.id === current);
-  return wizardSteps[Math.min(wizardSteps.length - 1, index + 1)].id;
+  const safeCurrent = wizardMainFlow.includes(current) ? current : "create";
+  const index = wizardMainFlow.findIndex((step) => step === safeCurrent);
+  return wizardMainFlow[Math.min(wizardMainFlow.length - 1, index + 1)];
 }
 
 async function readImageDimensions(file: File) {
@@ -500,7 +520,7 @@ export default function StudioPage() {
     if (step === "create") return true;
     if (step === "assets") return progress.hasGallery;
     if (step === "packages") return progress.hasAssets;
-    if (step === "share") return progress.hasPackages;
+    if (step === "share") return progress.hasAssets;
     return progress.isPublished;
   }
 
@@ -608,7 +628,7 @@ export default function StudioPage() {
     }
 
     if (stepParam && wizardSteps.some((step) => step.id === stepParam)) {
-      setActiveStep(stepParam as WizardStepId);
+      setActiveStep(stepParam === "packages" ? "share" : (stepParam as WizardStepId));
     }
 
     if (projectParam) {
@@ -1231,12 +1251,12 @@ export default function StudioPage() {
   async function handleSeedAssets(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (selectedFiles.length === 0 && progress.hasAssets) {
-      setActiveStep("packages");
+      setActiveStep("share");
       return;
     }
     const saved = await persistSelectedFiles();
     if (saved) {
-      setActiveStep("packages");
+      setActiveStep("share");
     }
   }
 
@@ -1246,7 +1266,7 @@ export default function StudioPage() {
     if (activeStep === "assets" && selectedFiles.length > 0) {
       const saved = await persistSelectedFiles();
       if (saved) {
-        setActiveStep("packages");
+        setActiveStep("share");
       }
       return;
     }
@@ -1532,9 +1552,12 @@ export default function StudioPage() {
         </div>
         <nav aria-label="Schritte" className="wizard-nav">
           <Link className="wizard-step wizard-step-open wizard-step-link" href="/" onClick={blockNavigationDuringAssetSave}>
-            <span className="wizard-step-label">Start</span>
+            <span className="wizard-step-label">
+              <UiIcon name="home" />
+              Start
+            </span>
           </Link>
-          {wizardSteps.map((step) => {
+          {wizardSteps.filter((step) => step.id !== "packages").map((step) => {
             const isEnabled = isStepAccessible(step.id);
             const stepState = getStepState(step.id);
             const stateLabel = stepState === "done" ? "erledigt" : stepState === "active" ? "aktiv" : "offen";
@@ -1548,7 +1571,10 @@ export default function StudioPage() {
                 onClick={() => setActiveStep(step.id)}
                 type="button"
               >
-                <span className="wizard-step-label">{step.short}</span>
+                <span className="wizard-step-label">
+                  <UiIcon name={iconForStep(step.id)} />
+                  {step.short}
+                </span>
                 {stepState === "done" ? (
                   <span
                     aria-label={stateLabel}
@@ -1561,14 +1587,7 @@ export default function StudioPage() {
               </button>
             );
           })}
-          <Link className="wizard-step wizard-step-open wizard-step-link" href="/settings" onClick={blockNavigationDuringAssetSave}>
-            <span className="wizard-step-label">
-              <span aria-hidden="true" className="wizard-step-gear">
-                &#9881;
-              </span>
-              Einstellungen
-            </span>
-          </Link>
+          <AdminDropdown active={false} onLinkClick={blockNavigationDuringAssetSave} variant="wizard" />
         </nav>
       </header>
 
@@ -1691,43 +1710,46 @@ export default function StudioPage() {
                   </div>
 
                   <div className="gallery-list">
-                    {openStepGalleries.map((gallery) => (
-                      <button
-                        className={`gallery-item ${selectedGalleryId === gallery.id ? "gallery-item-active" : ""}`}
-                        disabled={loading}
-                        key={gallery.id}
-                        onClick={() => setSelectedGalleryId(gallery.id)}
-                        type="button"
-                      >
-                        <div className="kv" style={{ alignItems: "flex-start" }}>
-                          <div className="grid" style={{ gap: "0.35rem" }}>
-                            <strong>{gallery.title}</strong>
-                            <div className="toolbar" style={{ gap: "0.4rem" }}>
-                              <span className={`status ${gallery.status === "published" ? "status-published" : "status-draft"}`}>
-                                {gallery.status === "published" ? "Live" : "Entwurf"}
-                              </span>
-                              {gallery.status === "published" ? (
-                                <span className={`status ${toCustomerStatusClass(gallery.customerStatus)}`}>
-                                  {toCustomerStatusLabel(gallery.customerStatus)}
+                    {openStepGalleries.map((gallery) => {
+                      const projectFlowStatus = toProjectFlowStatus(gallery);
+                      return (
+                        <button
+                          className={`gallery-item ${selectedGalleryId === gallery.id ? "gallery-item-active" : ""}`}
+                          disabled={loading}
+                          key={gallery.id}
+                          onClick={() => setSelectedGalleryId(gallery.id)}
+                          type="button"
+                        >
+                          <div className="kv" style={{ alignItems: "flex-start" }}>
+                            <div className="grid" style={{ gap: "0.35rem" }}>
+                              <strong>{gallery.title}</strong>
+                              <div className="toolbar" style={{ gap: "0.4rem" }}>
+                                <span className={`status ${projectFlowStatus.className}`}>
+                                  {projectFlowStatus.label}
                                 </span>
-                              ) : null}
+                                {gallery.status === "published" ? (
+                                  <span className={`status ${toCustomerStatusClass(gallery.customerStatus)}`}>
+                                    {toCustomerStatusLabel(gallery.customerStatus)}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <p className="small muted" style={{ marginBottom: 0 }}>
+                                {gallery.customerName ? `${gallery.customerName} (${gallery.customerEmail ?? "ohne E-Mail"})` : "Kein Kunde zugeordnet"}
+                              </p>
+                              <p className="small muted" style={{ marginBottom: 0 }}>
+                                Bilder in Galerie: {gallery.assetCount}
+                              </p>
+                              <p className="small muted" style={{ marginBottom: 0 }}>
+                                Pakete: {gallery.packageCount}
+                              </p>
+                              <p className="small muted" style={{ marginBottom: 0 }}>
+                                Zuletzt gespeichert: {formatProjectSavedAt(gallery.updatedAt ?? gallery.createdAt)}
+                              </p>
                             </div>
-                            <p className="small muted" style={{ marginBottom: 0 }}>
-                              {gallery.customerName ? `${gallery.customerName} (${gallery.customerEmail ?? "ohne E-Mail"})` : "Kein Kunde zugeordnet"}
-                            </p>
-                            <p className="small muted" style={{ marginBottom: 0 }}>
-                              Bilder in Galerie: {gallery.assetCount}
-                            </p>
-                            <p className="small muted" style={{ marginBottom: 0 }}>
-                              Pakete: {gallery.packageCount}
-                            </p>
-                            <p className="small muted" style={{ marginBottom: 0 }}>
-                              Zuletzt gespeichert: {formatProjectSavedAt(gallery.updatedAt ?? gallery.createdAt)}
-                            </p>
                           </div>
-                        </div>
-                      </button>
-                    ))}
+                        </button>
+                      );
+                    })}
                   </div>
                   {openStepGalleries.length === 0 ? (
                     <div className="notice notice-muted">
@@ -2050,10 +2072,13 @@ export default function StudioPage() {
 
       {activeStep === "packages" ? (
         <section className="card grid" style={{ gap: "0.75rem" }}>
-          <h2 style={{ marginBottom: 0 }}>Schritt 3: Pakete festlegen</h2>
+          <h2 style={{ marginBottom: 0 }}>Schritt 3: Projektpakete</h2>
           <p className="helper" style={{ marginBottom: 0 }}>
-            Definiere Preis, enthaltene Bilder und optional den Preis für Zusatzbilder.
+            Hier legst du fest, welche Pakete in diesem Projekt angezeigt werden.
           </p>
+          <div className="notice notice-muted small">
+            Zentrale Paketvorlagen findest du unter Admin → Pakete verwalten.
+          </div>
 
           {!progress.hasAssets ? (
             <div className="notice notice-error">Bitte zuerst in Schritt 2 Bilder hinzufügen.</div>

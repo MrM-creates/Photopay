@@ -8,6 +8,22 @@ import { createAdminClient } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
+function salesKey(input: {
+  name: string;
+  priceCents: number;
+  includedCount: number;
+  allowExtra: boolean;
+  extraUnitPriceCents: number | null;
+}) {
+  return [
+    input.name.trim().toLowerCase(),
+    input.priceCents,
+    input.includedCount,
+    input.allowExtra ? 1 : 0,
+    input.allowExtra ? (input.extraUnitPriceCents ?? -1) : 0,
+  ].join("|");
+}
+
 const packageTemplateSchema = z
   .object({
     name: z.string().trim().min(2).max(120),
@@ -42,14 +58,14 @@ export async function GET(request: Request) {
   if ("error" in auth) return auth.error;
 
   const supabase = createAdminClient();
-  const query = await supabase
+  const templatesQuery = await supabase
     .from("package_templates")
     .select("id,name,description,price_cents,included_count,allow_extra,extra_unit_price_cents,active,sort_order,updated_at")
     .eq("photographer_id", auth.photographerId)
     .order("sort_order", { ascending: true })
     .order("created_at", { ascending: true });
 
-  if (isMissingSchemaObjectError(query.error)) {
+  if (isMissingSchemaObjectError(templatesQuery.error)) {
     return ok({
       featureReady: false,
       migration: "20260313_0005_settings_entities.sql",
@@ -57,13 +73,34 @@ export async function GET(request: Request) {
     });
   }
 
-  if (query.error) {
-    return fail("DB_ERROR", query.error.message, 500);
+  if (templatesQuery.error) {
+    return fail("DB_ERROR", templatesQuery.error.message, 500);
+  }
+
+  const salesByTemplate = new Map<string, number>();
+
+  const salesQuery = await supabase
+    .from("order_items")
+    .select("package_name,base_price_cents,included_count,allow_extra,extra_unit_price_cents,orders!inner(photographer_id,payment_status)")
+    .eq("orders.photographer_id", auth.photographerId)
+    .eq("orders.payment_status", "paid");
+
+  if (!salesQuery.error && Array.isArray(salesQuery.data)) {
+    for (const row of salesQuery.data) {
+      const key = salesKey({
+        name: row.package_name,
+        priceCents: row.base_price_cents,
+        includedCount: row.included_count,
+        allowExtra: row.allow_extra,
+        extraUnitPriceCents: row.extra_unit_price_cents,
+      });
+      salesByTemplate.set(key, (salesByTemplate.get(key) ?? 0) + 1);
+    }
   }
 
   return ok({
     featureReady: true,
-    templates: query.data.map((entry) => ({
+    templates: templatesQuery.data.map((entry) => ({
       id: entry.id,
       name: entry.name,
       description: entry.description,
@@ -71,6 +108,16 @@ export async function GET(request: Request) {
       includedCount: entry.included_count,
       allowExtra: entry.allow_extra,
       extraUnitPriceCents: entry.extra_unit_price_cents,
+      soldCount:
+        salesByTemplate.get(
+          salesKey({
+            name: entry.name,
+            priceCents: entry.price_cents,
+            includedCount: entry.included_count,
+            allowExtra: entry.allow_extra,
+            extraUnitPriceCents: entry.extra_unit_price_cents,
+          }),
+        ) ?? 0,
       active: entry.active,
       sortOrder: entry.sort_order,
       updatedAt: entry.updated_at,
@@ -152,6 +199,7 @@ export async function POST(request: Request) {
         includedCount: insert.data.included_count,
         allowExtra: insert.data.allow_extra,
         extraUnitPriceCents: insert.data.extra_unit_price_cents,
+        soldCount: 0,
         active: insert.data.active,
         sortOrder: insert.data.sort_order,
         updatedAt: insert.data.updated_at,

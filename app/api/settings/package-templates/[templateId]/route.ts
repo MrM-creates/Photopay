@@ -103,6 +103,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       includedCount: update.data.included_count,
       allowExtra: update.data.allow_extra,
       extraUnitPriceCents: update.data.extra_unit_price_cents,
+      soldCount: 0,
       active: update.data.active,
       sortOrder: update.data.sort_order,
       updatedAt: update.data.updated_at,

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import AdminDropdown from "@/app/components/AdminDropdown";
 
 export default function HomePage() {
   const benefits = [
@@ -27,13 +28,10 @@ export default function HomePage() {
   return (
     <main className="landing-shell">
       <nav aria-label="Hauptmenü" className="landing-menu">
-        <Link className="landing-menu-link" href="/settings">
-          <span aria-hidden="true">&#9881;</span> Einstellungen
-        </Link>
+        <AdminDropdown />
       </nav>
 
       <header className="card landing-hero">
-        <p className="pill">PhotoPay für Fotografen</p>
         <h1 className="landing-title">PhotoPay</h1>
         <p className="landing-subtitle">Weniger Admin. Mehr Fotografie. Schneller bezahlt.</p>
         <p className="helper" style={{ marginBottom: 0, maxWidth: "60ch" }}>

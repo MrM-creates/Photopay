@@ -1,5 +1,5 @@
-import SettingsClient from "@/app/settings/SettingsClient";
+import { redirect } from "next/navigation";
 
 export default function SettingsPage() {
-  return <SettingsClient />;
+  redirect("/settings/packages");
 }
