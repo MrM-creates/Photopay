@@ -138,6 +138,28 @@ export default function AdminDropdown({
               >
                 <UiIcon name="mailtexts" /> Mailtexte
               </Link>
+              <Link
+                className="landing-menu-dropdown-item"
+                href="/settings/photographer"
+                onClick={(event) => {
+                  onLinkClick?.(event);
+                  setOpen(false);
+                }}
+                role="menuitem"
+              >
+                <UiIcon name="profile" /> Fotograf-Daten
+              </Link>
+              <Link
+                className="landing-menu-dropdown-item"
+                href="/settings/email"
+                onClick={(event) => {
+                  onLinkClick?.(event);
+                  setOpen(false);
+                }}
+                role="menuitem"
+              >
+                <UiIcon name="emailsetup" /> E-Mail einrichten
+              </Link>
             </div>,
             document.body,
           )

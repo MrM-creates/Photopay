@@ -20,6 +20,7 @@ type CustomerRow = {
 
 type GalleryRow = {
   id: string;
+  title: string;
   customer_id: string | null;
   status: "draft" | "published" | "archived";
   updated_at: string;
@@ -73,7 +74,7 @@ export async function GET(request: Request) {
 
   const galleriesQuery = await supabase
     .from("galleries")
-    .select("id,customer_id,status,updated_at,created_at")
+    .select("id,title,customer_id,status,updated_at,created_at")
     .eq("photographer_id", auth.photographerId)
     .in("customer_id", customerIds);
 
@@ -82,6 +83,11 @@ export async function GET(request: Request) {
   }
 
   const galleries = (galleriesQuery.error ? [] : galleriesQuery.data) as GalleryRow[];
+  const galleriesSorted = [...galleries].sort((left, right) => {
+    const leftAt = new Date(left.updated_at || left.created_at).getTime();
+    const rightAt = new Date(right.updated_at || right.created_at).getTime();
+    return rightAt - leftAt;
+  });
   const galleryIds = galleries.map((entry) => entry.id);
   const paidOrderCountByGalleryId = new Map<string, number>();
 
@@ -112,8 +118,12 @@ export async function GET(request: Request) {
       lastProjectSavedAt: string | null;
     }
   >();
+  const linkedProjectsByCustomerId = new Map<
+    string,
+    Array<{ id: string; title: string; status: "draft" | "published" | "archived"; updatedAt: string }>
+  >();
 
-  for (const gallery of galleries) {
+  for (const gallery of galleriesSorted) {
     if (!gallery.customer_id) continue;
     const current = statsByCustomerId.get(gallery.customer_id) ?? {
       projectCount: 0,
@@ -136,6 +146,15 @@ export async function GET(request: Request) {
     }
 
     statsByCustomerId.set(gallery.customer_id, current);
+
+    const linkedProjects = linkedProjectsByCustomerId.get(gallery.customer_id) ?? [];
+    linkedProjects.push({
+      id: gallery.id,
+      title: gallery.title,
+      status: gallery.status,
+      updatedAt: lastSavedCandidate,
+    });
+    linkedProjectsByCustomerId.set(gallery.customer_id, linkedProjects);
   }
 
   return ok({
@@ -170,6 +189,12 @@ export async function GET(request: Request) {
         archivedProjectCount: stats.archivedProjectCount,
         paidOrderCount: stats.paidOrderCount,
         lastProjectSavedAt: stats.lastProjectSavedAt,
+        linkedProjects: (linkedProjectsByCustomerId.get(entry.id) ?? []).map((project) => ({
+          id: project.id,
+          title: project.title,
+          status: project.status,
+          updatedAt: project.updatedAt,
+        })),
       };
     }),
   });

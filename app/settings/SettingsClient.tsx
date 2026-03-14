@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import UiIcon from "@/app/components/UiIcon";
 import AdminDropdown from "@/app/components/AdminDropdown";
 
@@ -46,9 +47,44 @@ type SettingsCustomer = {
   liveProjectCount: number;
   paidOrderCount: number;
   lastProjectSavedAt: string | null;
+  linkedProjects: Array<{
+    id: string;
+    title: string;
+    status: "draft" | "published" | "archived";
+    updatedAt: string;
+  }>;
 };
 
-type SettingsSection = "home" | "packages" | "customers" | "mailtexts";
+type PhotographerProfile = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  postalAddress: string;
+  mailSalutationMode: "first_name" | "full_name";
+  displayName: string;
+};
+
+type EmailSettings = {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  from: string;
+  replyTo: string;
+  hasPassword: boolean;
+  source: "database" | "env" | "none";
+};
+
+type SenderEmail = {
+  id: string;
+  email: string;
+  verified: boolean;
+  verifiedAt: string | null;
+  lastTestedAt: string | null;
+  createdAt: string;
+};
+
+type SettingsSection = "home" | "packages" | "customers" | "mailtexts" | "photographer" | "email";
 
 const photographerStorageKey = "photopay_photographer_id";
 
@@ -84,6 +120,12 @@ function formatMailTemplateId(id: string) {
   return `M-${compact}`;
 }
 
+function toLinkedProjectBadge(status: "draft" | "published" | "archived") {
+  if (status === "published") return { label: "Abgeschlossen", className: "status-published" };
+  if (status === "archived") return { label: "Archiv", className: "status-draft" };
+  return { label: "Läuft", className: "status-active" };
+}
+
 export default function SettingsClient({ section = "home" }: { section?: SettingsSection }) {
   const [photographerId, setPhotographerId] = useState("");
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -114,10 +156,34 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
   const [customerFeatureReady, setCustomerFeatureReady] = useState(true);
   const [customerSearch, setCustomerSearch] = useState("");
   const [isCustomerFormOpen, setIsCustomerFormOpen] = useState(false);
+  const [customerFormMode, setCustomerFormMode] = useState<"create" | "edit">("create");
+  const [editingCustomerId, setEditingCustomerId] = useState<string | null>(null);
   const [newCustomerFirstName, setNewCustomerFirstName] = useState("");
   const [newCustomerLastName, setNewCustomerLastName] = useState("");
   const [newCustomerEmail, setNewCustomerEmail] = useState("");
   const [newCustomerNote, setNewCustomerNote] = useState("");
+  const [profileFeatureReady, setProfileFeatureReady] = useState(true);
+  const [profileFirstName, setProfileFirstName] = useState("");
+  const [profileLastName, setProfileLastName] = useState("");
+  const [profileEmail, setProfileEmail] = useState("");
+  const [profilePostalAddress, setProfilePostalAddress] = useState("");
+  const [profileMailSalutationMode, setProfileMailSalutationMode] = useState<"first_name" | "full_name">("first_name");
+  const [emailFeatureReady, setEmailFeatureReady] = useState(true);
+  const [smtpHost, setSmtpHost] = useState("");
+  const [smtpPort, setSmtpPort] = useState("465");
+  const [smtpSecure, setSmtpSecure] = useState(true);
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpPassword, setSmtpPassword] = useState("");
+  const [smtpFrom, setSmtpFrom] = useState("");
+  const [smtpReplyTo, setSmtpReplyTo] = useState("");
+  const [senderEmails, setSenderEmails] = useState<SenderEmail[]>([]);
+  const [senderEmailsFeatureReady, setSenderEmailsFeatureReady] = useState(true);
+  const [newSenderEmail, setNewSenderEmail] = useState("");
+  const [senderSetActive, setSenderSetActive] = useState(false);
+  const [isSenderFormOpen, setIsSenderFormOpen] = useState(false);
+  const [senderFormMode, setSenderFormMode] = useState<"create" | "edit">("create");
+  const [editingSenderEmailId, setEditingSenderEmailId] = useState<string | null>(null);
+  const [overlayReady, setOverlayReady] = useState(false);
 
   const withHeaders = useCallback(
     async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -164,6 +230,11 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
         .includes(query),
     );
   }, [customerSearch, customers]);
+
+  const photographerDisplayName = useMemo(() => {
+    const fullName = [profileFirstName.trim(), profileLastName.trim()].filter(Boolean).join(" ").trim();
+    return fullName || "Noch nicht eingerichtet";
+  }, [profileFirstName, profileLastName]);
 
   const resetTemplateForm = useCallback(() => {
     setEditingTemplateId(null);
@@ -219,6 +290,48 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
     setCustomers((json.customers ?? []) as SettingsCustomer[]);
   }, [withHeaders]);
 
+  const loadPhotographerProfile = useCallback(async () => {
+    const response = await withHeaders("/api/settings/photographer-profile", { method: "GET" });
+    const json = await response.json();
+    if (!response.ok) {
+      throw new Error(json?.error?.message ?? "Fotografen-Daten konnten nicht geladen werden.");
+    }
+    setProfileFeatureReady(json.featureReady !== false);
+    const profile = (json.profile ?? {}) as PhotographerProfile;
+    setProfileFirstName(profile.firstName ?? "");
+    setProfileLastName(profile.lastName ?? "");
+    setProfileEmail(profile.email ?? "");
+    setProfilePostalAddress(profile.postalAddress ?? "");
+    setProfileMailSalutationMode(profile.mailSalutationMode === "full_name" ? "full_name" : "first_name");
+  }, [withHeaders]);
+
+  const loadEmailSettings = useCallback(async () => {
+    const response = await withHeaders("/api/settings/email-settings", { method: "GET" });
+    const json = await response.json();
+    if (!response.ok) {
+      throw new Error(json?.error?.message ?? "E-Mail-Einstellungen konnten nicht geladen werden.");
+    }
+    setEmailFeatureReady(json.featureReady !== false);
+    const settings = (json.settings ?? {}) as EmailSettings;
+    setSmtpHost(settings.host ?? "");
+    setSmtpPort(String(settings.port ?? 465));
+    setSmtpSecure(Boolean(settings.secure ?? true));
+    setSmtpUser(settings.user ?? "");
+    setSmtpFrom(settings.from ?? "");
+    setSmtpReplyTo(settings.replyTo ?? "");
+    setSmtpPassword("");
+  }, [withHeaders]);
+
+  const loadSenderEmails = useCallback(async () => {
+    const response = await withHeaders("/api/settings/sender-emails", { method: "GET" });
+    const json = await response.json();
+    if (!response.ok) {
+      throw new Error(json?.error?.message ?? "Absender-Adressen konnten nicht geladen werden.");
+    }
+    setSenderEmailsFeatureReady(json.featureReady !== false);
+    setSenderEmails((json.senderEmails ?? []) as SenderEmail[]);
+  }, [withHeaders]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -258,7 +371,14 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
     setLoading(true);
     setNotice(null);
 
-    void Promise.all([loadPackageTemplates(), loadMailTemplates(), loadCustomers()])
+    void Promise.all([
+      loadPackageTemplates(),
+      loadMailTemplates(),
+      loadCustomers(),
+      loadPhotographerProfile(),
+      loadEmailSettings(),
+      loadSenderEmails(),
+    ])
       .catch((error: unknown) => {
         setNotice({
           type: "error",
@@ -268,7 +388,29 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
       .finally(() => {
         setLoading(false);
       });
-  }, [photographerId, loadCustomers, loadMailTemplates, loadPackageTemplates]);
+  }, [
+    photographerId,
+    loadCustomers,
+    loadEmailSettings,
+    loadMailTemplates,
+    loadPackageTemplates,
+    loadPhotographerProfile,
+    loadSenderEmails,
+  ]);
+
+  useEffect(() => {
+    if (!notice || notice.type !== "success") return;
+    const timeout = window.setTimeout(() => {
+      setNotice((current) => (current?.type === "success" ? null : current));
+    }, 3500);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [notice]);
+
+  useEffect(() => {
+    setOverlayReady(true);
+  }, []);
 
   useEffect(() => {
     applyMailTemplate(selectedMailTemplate);
@@ -280,6 +422,12 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
     if (exists) return;
     setSelectedMailKey(mailTemplates[0].key);
   }, [mailTemplates, selectedMailKey]);
+
+  useEffect(() => {
+    if (smtpFrom.trim()) return;
+    if (senderEmails.length === 0) return;
+    setSmtpFrom(senderEmails[0].email);
+  }, [senderEmails, smtpFrom]);
 
   async function handleSaveTemplate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -439,14 +587,14 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
     }
   }
 
-  async function handleCreateCustomer(event: FormEvent<HTMLFormElement>) {
+  async function handleSaveCustomer(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setNotice(null);
 
     try {
-      const response = await withHeaders("/api/customers", {
-        method: "POST",
+      const response = await withHeaders(editingCustomerId ? `/api/customers/${editingCustomerId}` : "/api/customers", {
+        method: editingCustomerId ? "PATCH" : "POST",
         body: JSON.stringify({
           firstName: newCustomerFirstName.trim(),
           lastName: newCustomerLastName.trim() || undefined,
@@ -461,24 +609,250 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
 
       await loadCustomers();
       resetCustomerForm();
+      setEditingCustomerId(null);
+      setCustomerFormMode("create");
       setIsCustomerFormOpen(false);
       setNotice(null);
     } catch (error) {
       setNotice({
         type: "error",
-        text: error instanceof Error ? error.message : "Kunde konnte nicht gespeichert werden.",
+        text: error instanceof Error ? error.message : editingCustomerId ? "Kunde konnte nicht angepasst werden." : "Kunde konnte nicht gespeichert werden.",
       });
     } finally {
       setLoading(false);
     }
   }
 
+  async function handleDeleteCustomer(customerId: string, customerName: string) {
+    const confirmed = window.confirm(`Kunde ${customerName} wirklich löschen?`);
+    if (!confirmed) return;
+
+    setLoading(true);
+    setNotice(null);
+    try {
+      const response = await withHeaders(`/api/customers/${customerId}`, {
+        method: "DELETE",
+      });
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json?.error?.message ?? "Kunde konnte nicht gelöscht werden.");
+      }
+      await loadCustomers();
+      if (editingCustomerId === customerId) {
+        setIsCustomerFormOpen(false);
+        resetCustomerForm();
+        setEditingCustomerId(null);
+        setCustomerFormMode("create");
+      }
+      setNotice(null);
+    } catch (error) {
+      setNotice({
+        type: "error",
+        text: error instanceof Error ? error.message : "Kunde konnte nicht gelöscht werden.",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSavePhotographerProfile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoading(true);
+    setNotice(null);
+
+    try {
+      const response = await withHeaders("/api/settings/photographer-profile", {
+        method: "PUT",
+        body: JSON.stringify({
+          firstName: profileFirstName.trim(),
+          lastName: profileLastName.trim() || undefined,
+          email: profileEmail.trim() || undefined,
+          postalAddress: profilePostalAddress.trim() || undefined,
+          mailSalutationMode: profileMailSalutationMode,
+        }),
+      });
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json?.error?.message ?? "Fotografen-Daten konnten nicht gespeichert werden.");
+      }
+      await loadPhotographerProfile();
+      setNotice({ type: "success", text: "Fotografen-Daten gespeichert." });
+    } catch (error) {
+      setNotice({
+        type: "error",
+        text: error instanceof Error ? error.message : "Fotografen-Daten konnten nicht gespeichert werden.",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function createSenderEmail() {
+    const email = newSenderEmail.trim();
+    if (!email) return;
+    if (!smtpHost.trim() || !smtpPort.trim() || !smtpUser.trim() || !smtpPassword.trim()) {
+      setNotice({ type: "error", text: "Bitte SMTP Host, Port, Benutzername und Passwort erfassen." });
+      return;
+    }
+
+    setLoading(true);
+    setNotice(null);
+    try {
+      const fromValue = senderSetActive ? email : smtpFrom.trim() || email;
+      const settingsResponse = await withHeaders("/api/settings/email-settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          host: smtpHost.trim(),
+          port: Number(smtpPort),
+          secure: smtpSecure,
+          user: smtpUser.trim(),
+          password: smtpPassword.trim(),
+          from: fromValue,
+          replyTo: smtpReplyTo.trim() || undefined,
+        }),
+      });
+      const settingsJson = await settingsResponse.json();
+      if (!settingsResponse.ok) {
+        throw new Error(settingsJson?.error?.message ?? "SMTP-Daten konnten nicht gespeichert werden.");
+      }
+
+      const response = await withHeaders("/api/settings/sender-emails", {
+        method: "POST",
+        body: JSON.stringify({ email }),
+      });
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json?.error?.message ?? "Mailadresse konnte nicht gespeichert werden.");
+      }
+
+      setSmtpFrom(fromValue);
+      setSmtpPassword("");
+      await loadEmailSettings();
+      await loadSenderEmails();
+      setNewSenderEmail("");
+      setSenderSetActive(false);
+      setEditingSenderEmailId(null);
+      setIsSenderFormOpen(false);
+      setNotice({ type: "success", text: "Mailadresse gespeichert und geprüft." });
+    } catch (error) {
+      setNotice({
+        type: "error",
+        text: error instanceof Error ? error.message : "Mailadresse konnte nicht gespeichert werden.",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function updateSenderEmail() {
+    if (!editingSenderEmailId) return;
+    const email = newSenderEmail.trim();
+    if (!email) return;
+    if (!smtpHost.trim() || !smtpPort.trim() || !smtpUser.trim() || !smtpPassword.trim()) {
+      setNotice({ type: "error", text: "Bitte SMTP Host, Port, Benutzername und Passwort erfassen." });
+      return;
+    }
+
+    setLoading(true);
+    setNotice(null);
+    try {
+      const fromValue = senderSetActive ? email : smtpFrom.trim() || email;
+      const settingsResponse = await withHeaders("/api/settings/email-settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          host: smtpHost.trim(),
+          port: Number(smtpPort),
+          secure: smtpSecure,
+          user: smtpUser.trim(),
+          password: smtpPassword.trim(),
+          from: fromValue,
+          replyTo: smtpReplyTo.trim() || undefined,
+        }),
+      });
+      const settingsJson = await settingsResponse.json();
+      if (!settingsResponse.ok) {
+        throw new Error(settingsJson?.error?.message ?? "SMTP-Daten konnten nicht gespeichert werden.");
+      }
+
+      const response = await withHeaders(`/api/settings/sender-emails/${editingSenderEmailId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ email }),
+      });
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json?.error?.message ?? "Mailadresse konnte nicht angepasst werden.");
+      }
+
+      setSmtpFrom(fromValue);
+      setSmtpPassword("");
+      await loadEmailSettings();
+      await loadSenderEmails();
+      setNewSenderEmail("");
+      setSenderSetActive(false);
+      setEditingSenderEmailId(null);
+      setIsSenderFormOpen(false);
+      setNotice({ type: "success", text: "Mailadresse angepasst und geprüft." });
+    } catch (error) {
+      setNotice({
+        type: "error",
+        text: error instanceof Error ? error.message : "Mailadresse konnte nicht angepasst werden.",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDeleteSenderEmail(senderEmailId: string, senderEmail: string, isActive: boolean) {
+    if (isActive) {
+      setNotice({ type: "error", text: "Aktive Mailadresse kann nicht gelöscht werden. Bitte zuerst eine andere aktiv setzen." });
+      return;
+    }
+
+    const confirmed = window.confirm(`Mailadresse ${senderEmail} wirklich löschen?`);
+    if (!confirmed) return;
+
+    setLoading(true);
+    setNotice(null);
+    try {
+      const response = await withHeaders(`/api/settings/sender-emails/${senderEmailId}`, {
+        method: "DELETE",
+      });
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json?.error?.message ?? "Mailadresse konnte nicht gelöscht werden.");
+      }
+      await loadSenderEmails();
+      setNotice({ type: "success", text: "Mailadresse gelöscht." });
+    } catch (error) {
+      setNotice({
+        type: "error",
+        text: error instanceof Error ? error.message : "Mailadresse konnte nicht gelöscht werden.",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCreateSenderEmail(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (senderFormMode === "edit") {
+      await updateSenderEmail();
+      return;
+    }
+    await createSenderEmail();
+  }
+
   return (
     <main className="landing-shell">
       <header className="card settings-topbar">
-        <Link className="studio-brand-link" href="/">
-          PhotoPay
-        </Link>
+        <div className="settings-brand-block">
+          <Link className="studio-brand-link" href="/">
+            PhotoPay
+          </Link>
+          <p className="studio-top-photographer">
+            Fotograf: <strong>{photographerDisplayName}</strong>
+          </p>
+        </div>
         <nav aria-label="Hauptmenü" className="landing-menu">
           <Link className="landing-menu-link" href="/">
             <UiIcon name="home" />
@@ -552,6 +926,34 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
                 </Link>
               </div>
             </article>
+
+            <article className="card settings-entry-card">
+              <h2 className="settings-title-row">
+                <UiIcon name="profile" />
+                Fotograf-Daten
+              </h2>
+              <p className="helper">
+                Pflege deine Angaben für Mails und Kommunikation: Name, E-Mail, Adresse und Ansprache.
+              </p>
+              <div className="toolbar">
+                <Link className="btn settings-entry-action" href="/settings/photographer">
+                  Fotograf-Daten
+                </Link>
+              </div>
+            </article>
+
+            <article className="card settings-entry-card">
+              <h2 className="settings-title-row">
+                <UiIcon name="emailsetup" />
+                E-Mail einrichten
+              </h2>
+              <p className="helper">Mailversand einrichten, Absender wählen und Testmail senden.</p>
+              <div className="toolbar">
+                <Link className="btn settings-entry-action" href="/settings/email">
+                  E-Mail einrichten
+                </Link>
+              </div>
+            </article>
           </section>
         </>
       ) : null}
@@ -594,7 +996,7 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
                       <p className="small muted" style={{ marginBottom: 0 }}>
                         Anzahl verkauft: {entry.soldCount ?? 0}
                       </p>
-                      <div className="toolbar">
+                      <div className="toolbar settings-card-actions">
                         <button
                           className="btn btn-secondary"
                           disabled={loading}
@@ -818,11 +1220,51 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
                       </div>
                       {entry.note ? <p className="small muted">{entry.note}</p> : null}
                       <p className="small muted" style={{ marginBottom: 0 }}>
-                        Projekte: {entry.projectCount} (Läuft {entry.draftProjectCount}, Abgeschlossen {entry.liveProjectCount})
-                      </p>
-                      <p className="small muted" style={{ marginBottom: 0 }}>
                         Bezahlte Bestellungen: {entry.paidOrderCount}
                       </p>
+                      {entry.linkedProjects.length > 0 ? (
+                        <>
+                          <p className="small muted" style={{ marginBottom: 0 }}>
+                            Verknüpfte Projekte
+                          </p>
+                          <div className="toolbar settings-card-actions settings-linked-projects">
+                            {entry.linkedProjects.map((project) => (
+                              <Link className="btn btn-secondary" href={`/studio?step=summary&mode=open&project=${project.id}`} key={project.id}>
+                                <span>{project.title}</span>
+                                <span className={`status ${toLinkedProjectBadge(project.status).className}`}>
+                                  {toLinkedProjectBadge(project.status).label}
+                                </span>
+                              </Link>
+                            ))}
+                          </div>
+                        </>
+                      ) : null}
+                      <div className="toolbar settings-card-actions">
+                        <button
+                          className="btn btn-secondary"
+                          disabled={loading}
+                          onClick={() => {
+                            setCustomerFormMode("edit");
+                            setEditingCustomerId(entry.id);
+                            setNewCustomerFirstName(entry.firstName ?? entry.fullName);
+                            setNewCustomerLastName(entry.lastName ?? "");
+                            setNewCustomerEmail(entry.email);
+                            setNewCustomerNote(entry.note ?? "");
+                            setIsCustomerFormOpen(true);
+                          }}
+                          type="button"
+                        >
+                          Bearbeiten
+                        </button>
+                        <button
+                          className="btn btn-secondary"
+                          disabled={loading}
+                          onClick={() => void handleDeleteCustomer(entry.id, entry.fullName)}
+                          type="button"
+                        >
+                          Löschen
+                        </button>
+                      </div>
                     </article>
                   ))
                 ) : (
@@ -834,6 +1276,8 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
                 <button
                   className="btn"
                   onClick={() => {
+                    setCustomerFormMode("create");
+                    setEditingCustomerId(null);
                     resetCustomerForm();
                     setIsCustomerFormOpen(true);
                   }}
@@ -850,6 +1294,8 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
                   onMouseDown={(event) => {
                     if (event.target === event.currentTarget) {
                       setIsCustomerFormOpen(false);
+                      setCustomerFormMode("create");
+                      setEditingCustomerId(null);
                       resetCustomerForm();
                     }
                   }}
@@ -859,16 +1305,20 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
                     <div className="settings-dialog-header">
                       <div>
                         <h3 className="settings-dialog-title" style={{ marginBottom: "0.15rem" }}>
-                          Neuen Kunden erfassen
+                          {customerFormMode === "edit" ? "Kunde bearbeiten" : "Neuen Kunden erfassen"}
                         </h3>
                         <p className="helper" style={{ marginBottom: 0 }}>
-                          Erfasse die Kundendaten in wenigen Schritten.
+                          {customerFormMode === "edit"
+                            ? "Passe die Kundendaten in wenigen Schritten an."
+                            : "Erfasse die Kundendaten in wenigen Schritten."}
                         </p>
                       </div>
                       <button
                         className="btn btn-secondary"
                         onClick={() => {
                           setIsCustomerFormOpen(false);
+                          setCustomerFormMode("create");
+                          setEditingCustomerId(null);
                           resetCustomerForm();
                         }}
                         type="button"
@@ -877,7 +1327,7 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
                       </button>
                     </div>
 
-                    <form className="grid" onSubmit={handleCreateCustomer} style={{ gap: "0.6rem" }}>
+                    <form className="grid" onSubmit={handleSaveCustomer} style={{ gap: "0.6rem" }}>
                       <div className="grid grid-2">
                         <div>
                           <label className="label" htmlFor="customer-first-name">
@@ -938,6 +1388,8 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
                           disabled={loading}
                           onClick={() => {
                             setIsCustomerFormOpen(false);
+                            setCustomerFormMode("create");
+                            setEditingCustomerId(null);
                             resetCustomerForm();
                           }}
                           type="button"
@@ -1164,6 +1616,333 @@ export default function SettingsClient({ section = "home" }: { section?: Setting
                   </section>
                 </div>
               ) : null}
+            </>
+          )}
+        </section>
+      ) : null}
+
+      {section === "photographer" ? (
+        <section className="card grid" style={{ gap: "0.8rem" }}>
+          <div className="settings-dialog-header settings-dialog-header-page">
+            <div>
+              <h2 className="settings-dialog-title settings-title-row">
+                <UiIcon name="profile" />
+                Fotograf-Daten
+              </h2>
+              <p className="helper" style={{ marginBottom: 0 }}>
+                Diese Angaben werden in Mailtexten und in der Kundenkommunikation verwendet.
+              </p>
+            </div>
+          </div>
+
+          {!profileFeatureReady ? (
+            <div className="notice notice-muted">
+              Fotografen-Daten sind noch nicht aktiviert. Bitte Migration <code>20260314_0008_photographer_profile_and_email_settings.sql</code>{" "}
+              ausführen.
+            </div>
+          ) : (
+            <form className="grid" onSubmit={handleSavePhotographerProfile} style={{ gap: "0.6rem" }}>
+              <div className="grid grid-2">
+                <div>
+                  <label className="label" htmlFor="profile-first-name">
+                    Vorname
+                  </label>
+                  <input
+                    className="input"
+                    id="profile-first-name"
+                    onChange={(event) => setProfileFirstName(event.target.value)}
+                    value={profileFirstName}
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="profile-last-name">
+                    Nachname
+                  </label>
+                  <input
+                    className="input"
+                    id="profile-last-name"
+                    onChange={(event) => setProfileLastName(event.target.value)}
+                    value={profileLastName}
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-2">
+                <div>
+                  <label className="label" htmlFor="profile-email">
+                    E-Mail
+                  </label>
+                  <input
+                    className="input"
+                    id="profile-email"
+                    onChange={(event) => setProfileEmail(event.target.value)}
+                    type="email"
+                    value={profileEmail}
+                  />
+                </div>
+                <div>
+                  <label className="label" htmlFor="profile-salutation">
+                    Ansprache in Mails
+                  </label>
+                  <select
+                    className="select"
+                    id="profile-salutation"
+                    onChange={(event) => setProfileMailSalutationMode(event.target.value as "first_name" | "full_name")}
+                    value={profileMailSalutationMode}
+                  >
+                    <option value="first_name">Nur Vorname</option>
+                    <option value="full_name">Vor- und Nachname</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="label" htmlFor="profile-address">
+                  Adresse
+                </label>
+                <textarea
+                  className="textarea"
+                  id="profile-address"
+                  onChange={(event) => setProfilePostalAddress(event.target.value)}
+                  placeholder={"z. B. Musterstrasse 5\n8000 Zürich"}
+                  value={profilePostalAddress}
+                />
+              </div>
+
+              <div className="toolbar">
+                <button className="btn" disabled={loading} type="submit">
+                  Fotograf-Daten speichern
+                </button>
+              </div>
+            </form>
+          )}
+        </section>
+      ) : null}
+
+      {section === "email" ? (
+        <section className="card grid" style={{ gap: "0.8rem" }}>
+          <div className="settings-dialog-header settings-dialog-header-page">
+            <div>
+              <h2 className="settings-dialog-title settings-title-row">
+                <UiIcon name="emailsetup" />
+                E-Mail einrichten
+              </h2>
+              <p className="helper" style={{ marginBottom: 0 }}>
+                Du findest die Angaben zu deinem Mailaccount bei deinem Mail-Provider.
+              </p>
+            </div>
+          </div>
+
+          {!emailFeatureReady ? (
+            <div className="notice notice-muted">
+              E-Mail-Einstellungen sind noch nicht aktiviert. Bitte Migration <code>20260314_0008_photographer_profile_and_email_settings.sql</code>{" "}
+              ausführen.
+            </div>
+          ) : !senderEmailsFeatureReady ? (
+            <div className="notice notice-muted">
+              Absender-Adressen sind noch nicht aktiviert. Bitte Migration <code>20260314_0009_sender_emails.sql</code> ausführen.
+            </div>
+          ) : (
+            <>
+              <section className="settings-list">
+                <h3 style={{ marginBottom: 0 }}>Vorhandene Mailadressen</h3>
+                {senderEmails.length > 0 ? (
+                  senderEmails.map((entry) => {
+                    const isActive = smtpFrom.trim().toLowerCase() === entry.email.trim().toLowerCase();
+                    return (
+                      <article className="benefit-card settings-mail-card" key={entry.id}>
+                        <div className="kv">
+                          <strong>{entry.email}</strong>
+                          <span className="small muted">{isActive ? "Aktiv" : "Inaktiv"}</span>
+                        </div>
+                        <p className="small muted settings-mail-status">Status: Geprüft</p>
+                        <div className="toolbar settings-card-actions">
+                          <button
+                            className="btn btn-secondary"
+                            disabled={loading}
+                            onClick={() => {
+                              setSenderFormMode("edit");
+                              setEditingSenderEmailId(entry.id);
+                              setNewSenderEmail(entry.email);
+                              setSenderSetActive(isActive);
+                              setIsSenderFormOpen(true);
+                            }}
+                            type="button"
+                          >
+                            Bearbeiten
+                          </button>
+                          <button
+                            className="btn btn-secondary"
+                            disabled={loading}
+                            onClick={() => void handleDeleteSenderEmail(entry.id, entry.email, isActive)}
+                            type="button"
+                          >
+                            Löschen
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })
+                ) : (
+                  <div className="notice notice-muted">Noch keine Mailadresse erfasst.</div>
+                )}
+              </section>
+
+              <div className="toolbar">
+                <button
+                  className="btn"
+                  onClick={() => {
+                    setSenderFormMode("create");
+                    setEditingSenderEmailId(null);
+                    setIsSenderFormOpen(true);
+                    setNewSenderEmail(profileEmail.trim() || "");
+                    setSenderSetActive(false);
+                  }}
+                  type="button"
+                >
+                  Neue Mailadresse erfassen
+                </button>
+              </div>
+
+              {isSenderFormOpen && overlayReady
+                ? createPortal(
+                    <div
+                      aria-modal="true"
+                      className="settings-overlay-backdrop"
+                      onMouseDown={(event) => {
+                        if (event.target === event.currentTarget) {
+                          setIsSenderFormOpen(false);
+                        }
+                      }}
+                      role="dialog"
+                    >
+                      <section className="card settings-overlay-card">
+                        <div className="settings-dialog-header">
+                          <div>
+                            <h3 className="settings-dialog-title" style={{ marginBottom: "0.15rem" }}>
+                              {senderFormMode === "create" ? "Neue Mailadresse erfassen" : "Mailadresse anpassen"}
+                            </h3>
+                            <p className="helper" style={{ marginBottom: 0 }}>
+                              Die Mailadresse wird beim Speichern automatisch geprüft.
+                            </p>
+                          </div>
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => {
+                              setIsSenderFormOpen(false);
+                              setEditingSenderEmailId(null);
+                            }}
+                            type="button"
+                          >
+                            Schliessen
+                          </button>
+                        </div>
+
+                    <form className="grid" onSubmit={handleCreateSenderEmail} style={{ gap: "0.6rem" }}>
+                      <div>
+                        <label className="label" htmlFor="sender-email-new">
+                          Mailadresse
+                        </label>
+                            <input
+                              autoFocus
+                              className="input"
+                              id="sender-email-new"
+                              onChange={(event) => setNewSenderEmail(event.target.value)}
+                              placeholder="z. B. info@mrmimagines.ch"
+                              required
+                              type="email"
+                          value={newSenderEmail}
+                        />
+                      </div>
+                      <div className="grid grid-2">
+                        <div>
+                          <label className="label" htmlFor="sender-smtp-host">
+                            SMTP Host
+                          </label>
+                          <input
+                            className="input"
+                            id="sender-smtp-host"
+                            onChange={(event) => setSmtpHost(event.target.value)}
+                            placeholder="asmtp.mail.hostpoint.ch"
+                            required
+                            value={smtpHost}
+                          />
+                        </div>
+                        <div>
+                          <label className="label" htmlFor="sender-smtp-port">
+                            Port
+                          </label>
+                          <input
+                            className="input mono"
+                            id="sender-smtp-port"
+                            onChange={(event) => setSmtpPort(event.target.value)}
+                            required
+                            type="number"
+                            value={smtpPort}
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-2">
+                        <div>
+                          <label className="label" htmlFor="sender-smtp-user">
+                            Benutzername
+                          </label>
+                          <input
+                            className="input"
+                            id="sender-smtp-user"
+                            onChange={(event) => setSmtpUser(event.target.value)}
+                            required
+                            value={smtpUser}
+                          />
+                        </div>
+                        <div>
+                          <label className="label" htmlFor="sender-smtp-password">
+                            Passwort
+                          </label>
+                          <input
+                            className="input"
+                            id="sender-smtp-password"
+                            onChange={(event) => setSmtpPassword(event.target.value)}
+                            required
+                            type="password"
+                            value={smtpPassword}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="label" htmlFor="sender-smtp-reply-to">
+                          Reply-To (optional)
+                        </label>
+                        <input
+                          className="input"
+                          id="sender-smtp-reply-to"
+                          onChange={(event) => setSmtpReplyTo(event.target.value)}
+                          value={smtpReplyTo}
+                        />
+                      </div>
+                      <label className="asset-item" style={{ width: "fit-content" }}>
+                        <input checked={smtpSecure} onChange={(event) => setSmtpSecure(event.target.checked)} type="checkbox" />
+                        TLS/SSL verwenden
+                      </label>
+                      <label className="asset-item" style={{ width: "fit-content" }}>
+                        <input
+                          checked={senderSetActive}
+                              onChange={(event) => setSenderSetActive(event.target.checked)}
+                              type="checkbox"
+                            />
+                            Als aktive Mailadresse setzen
+                          </label>
+                          <div className="toolbar">
+                            <button className="btn" disabled={loading || !newSenderEmail.trim()} type="submit">
+                              Mailadresse speichern
+                            </button>
+                          </div>
+                        </form>
+                      </section>
+                    </div>,
+                    document.body,
+                  )
+                : null}
             </>
           )}
         </section>

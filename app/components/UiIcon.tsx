@@ -9,7 +9,9 @@ export type UiIconName =
   | "admin"
   | "packages"
   | "customers"
-  | "mailtexts";
+  | "mailtexts"
+  | "profile"
+  | "emailsetup";
 
 function iconPath(name: UiIconName) {
   switch (name) {
@@ -82,6 +84,23 @@ function iconPath(name: UiIconName) {
         <>
           <rect x="3.5" y="5.5" width="17" height="13" rx="2" />
           <path d="M4.5 7l7.5 6 7.5-6" />
+        </>
+      );
+    case "profile":
+      return (
+        <>
+          <circle cx="12" cy="8.2" r="3.1" />
+          <path d="M5 19c1.1-3 3.6-4.6 7-4.6s5.9 1.6 7 4.6" />
+          <path d="M18.5 5.8h2.5" />
+        </>
+      );
+    case "emailsetup":
+      return (
+        <>
+          <rect x="3.5" y="6" width="17" height="12.5" rx="2" />
+          <path d="M4.6 7.2 12 12.6l7.4-5.4" />
+          <path d="M17.2 4.2v3.3" />
+          <path d="M15.6 5.8h3.2" />
         </>
       );
     default:

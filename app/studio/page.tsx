@@ -200,7 +200,30 @@ function toFriendlyError(error: unknown, fallback: string) {
   }
 
   if (raw.includes("FEATURE_NOT_READY")) {
+    if (raw.includes("E-Mail-Einstellungen")) {
+      return "E-Mail-Einstellungen sind noch nicht aktiviert. Bitte Migration ausführen.";
+    }
     return "Kundenverwaltung ist in der Datenbank noch nicht aktiviert. Bitte kurz Migration ausführen oder vorerst „Kunden später zuordnen“ wählen.";
+  }
+
+  if (raw.includes("MAIL_NOT_CONFIGURED")) {
+    return "Der Mailversand ist noch nicht eingerichtet. Bitte unter Admin → E-Mail einrichten konfigurieren.";
+  }
+
+  if (raw.includes("EMAIL_SEND_FAILED")) {
+    return "Die E-Mail konnte nicht gesendet werden. Bitte SMTP-Zugang und Empfängeradresse prüfen.";
+  }
+
+  if (raw.includes("GALLERY_NOT_PUBLISHED")) {
+    return "Bitte die Galerie zuerst freigeben, bevor du die Mail sendest.";
+  }
+
+  if (raw.includes("CUSTOMER_EMAIL_REQUIRED")) {
+    return "Für den Mailversand braucht der Kunde eine E-Mail-Adresse.";
+  }
+
+  if (raw.includes("TEMPLATE_INACTIVE")) {
+    return "Die Freigabe-Vorlage ist deaktiviert. Bitte aktiviere sie unter Admin → Mailtexte.";
   }
 
   if (raw.includes("DB_ERROR")) {
@@ -299,6 +322,8 @@ async function readImageDimensions(file: File) {
 
 export default function StudioPage() {
   const [photographerId, setPhotographerId] = useState("");
+  const [photographerName, setPhotographerName] = useState("Noch nicht eingerichtet");
+  const [profileComplete, setProfileComplete] = useState<boolean | null>(null);
   const [activeStep, setActiveStep] = useState<WizardStepId>("create");
   const [entryMode, setEntryMode] = useState<EntryMode>("new");
   const [requestedProjectId, setRequestedProjectId] = useState<string | null>(null);
@@ -739,6 +764,24 @@ export default function StudioPage() {
     setCustomers((json.customers ?? []) as Customer[]);
   }, [photographerId, withPhotographerHeaders]);
 
+  const loadPhotographerProfile = useCallback(async () => {
+    if (!photographerId) return;
+
+    const response = await withPhotographerHeaders("/api/settings/photographer-profile", { method: "GET" });
+    const json = await response.json();
+
+    if (!response.ok) {
+      throw new Error(json?.error?.message ?? "Fotografen-Daten konnten nicht geladen werden");
+    }
+
+    const firstName = String(json?.profile?.firstName ?? "").trim();
+    const lastName = String(json?.profile?.lastName ?? "").trim();
+    const displayName = [firstName, lastName].filter(Boolean).join(" ").trim();
+
+    setPhotographerName(displayName || "Noch nicht eingerichtet");
+    setProfileComplete(Boolean(firstName && lastName));
+  }, [photographerId, withPhotographerHeaders]);
+
   const loadPackages = useCallback(
     async (galleryId: string) => {
       if (!galleryId) {
@@ -795,7 +838,12 @@ export default function StudioPage() {
     void loadCustomers().catch((error) => {
       setErrorNotice(error, "Kunden konnten nicht geladen werden.");
     });
-  }, [photographerId, loadCustomers, loadGalleries, setErrorNotice]);
+    void loadPhotographerProfile().catch((error) => {
+      setErrorNotice(error, "Fotografen-Daten konnten nicht geladen werden.");
+      setProfileComplete(false);
+      setPhotographerName("Noch nicht eingerichtet");
+    });
+  }, [photographerId, loadCustomers, loadGalleries, loadPhotographerProfile, setErrorNotice]);
 
   useEffect(() => {
     if (!selectedGalleryId || !photographerId) {
@@ -1442,6 +1490,53 @@ export default function StudioPage() {
     });
   }
 
+  async function handleSendShareEmail() {
+    if (!selectedGalleryId) {
+      setNotice({ type: "error", text: "Bitte zuerst ein Projekt auswählen." });
+      setSaveStatus("error");
+      return;
+    }
+    if (!selectedGallery?.customerEmail) {
+      setNotice({ type: "error", text: "Bitte zuerst eine Kunden-E-Mail hinterlegen." });
+      setSaveStatus("error");
+      return;
+    }
+
+    const projectId = selectedGalleryId;
+
+    await runWithProjectWriteLock(projectId, async () => {
+      setLoading(true);
+      setSaveStatus("saving");
+      setNotice(null);
+
+      try {
+        const response = await withProjectHeaders(projectId, `/api/galleries/${projectId}/share-email`, {
+          method: "POST",
+          body: JSON.stringify({
+            templateKey: "gallery_share",
+            accessPassword: galleryPassword.trim() || undefined,
+          }),
+        });
+        const json = await response.json();
+
+        if (!response.ok) {
+          throw new Error(json?.error?.code ?? json?.error?.message ?? "Freigabe-Mail konnte nicht gesendet werden");
+        }
+
+        setNotice({
+          type: "success",
+          text: `Freigabe-Mail wurde an ${json?.to ?? selectedGallery.customerEmail} gesendet.`,
+        });
+        setSaveStatus("saved");
+      } catch (error) {
+        setSaveStatus("error");
+        setErrorNotice(error, "Die Freigabe-Mail konnte nicht gesendet werden.");
+      } finally {
+        setLoading(false);
+      }
+    });
+  }
+
   async function reloadProjectContext() {
     setLoading(true);
     setNotice(null);
@@ -1539,6 +1634,44 @@ export default function StudioPage() {
     }
   }
 
+  if (profileComplete === false) {
+    return (
+      <main className="studio-shell">
+        <header className="studio-top">
+          <div className="studio-top-brand">
+            <Link className="studio-brand-link" href="/" onClick={blockNavigationDuringAssetSave}>
+              PhotoPay
+            </Link>
+            <p className="studio-top-photographer">
+              Fotograf: <strong>{photographerName}</strong>
+            </p>
+          </div>
+          <nav aria-label="Schritte" className="wizard-nav">
+            <Link className="wizard-step wizard-step-open wizard-step-link" href="/" onClick={blockNavigationDuringAssetSave}>
+              <span className="wizard-step-label">
+                <UiIcon name="home" />
+                Start
+              </span>
+            </Link>
+            <AdminDropdown active={false} onLinkClick={blockNavigationDuringAssetSave} variant="wizard" />
+          </nav>
+        </header>
+
+        <section className="card grid" style={{ gap: "0.75rem" }}>
+          <h2 style={{ marginBottom: 0 }}>Bevor du startest</h2>
+          <p className="helper" style={{ marginBottom: 0 }}>
+            Bitte erfasse einmalig deine Fotografen-Daten (Vorname und Nachname). Danach kannst du mit Projekten loslegen.
+          </p>
+          <div className="toolbar">
+            <Link className="btn" href="/settings/photographer" onClick={blockNavigationDuringAssetSave}>
+              Fotografen-Daten erfassen
+            </Link>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="studio-shell">
       <header className="studio-top">
@@ -1546,6 +1679,9 @@ export default function StudioPage() {
           <Link className="studio-brand-link" href="/" onClick={blockNavigationDuringAssetSave}>
             PhotoPay
           </Link>
+          <p className="studio-top-photographer">
+            Fotograf: <strong>{photographerName}</strong>
+          </p>
           <p className="studio-top-project">
             Projekt: <strong>{currentProjectLabel}</strong>
           </p>
@@ -2485,6 +2621,16 @@ export default function StudioPage() {
                     </p>
                   </div>
                   <div className="toolbar">
+                    <button
+                      className="btn btn-secondary"
+                      disabled={loading || !progress.isPublished || !selectedGallery.customerEmail}
+                      onClick={() => {
+                        void handleSendShareEmail();
+                      }}
+                      type="button"
+                    >
+                      Freigabe-Mail senden
+                    </button>
                     <a className="btn btn-secondary" href={publicGalleryUrl} rel="noreferrer" target="_blank">
                       Kundenseite öffnen
                     </a>
